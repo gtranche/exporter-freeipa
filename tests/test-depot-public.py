@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# Copyright (C) 2026 gtranche
+# SPDX-License-Identifier: GPL-3.0-or-later
 # Ce depot est public : il ne doit porter aucune adresse, aucun nom de domaine
 # et aucun royaume Kerberos appartenant a une infrastructure reelle.
 #
@@ -28,6 +30,7 @@ DOMAINES_PERMIS = {
     "example.com", "example.net", "example.org", "localhost",
     "kubernetes.io", "coreos.com", "quay.io", "prometheus.io",
     "docker.io", "grafana.com", "github.com",
+    "gnu.org", "fsf.org",
 }
 TLD_SURVEILLES = ("com", "net", "org", "io", "fr", "eu", "local", "lan", "home", "internal")
 

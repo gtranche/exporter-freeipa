@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# Copyright (C) 2026 gtranche
+# SPDX-License-Identifier: GPL-3.0-or-later
 # Tests de l exportateur FreeIPA. Ils n ont besoin ni d un annuaire, ni du
 # parc, ni d un identifiant : tout ce qui touche a 389-DS passe par un double
 # qui rend les attributs deja decoupes, comme le fait ldapsearch.
@@ -51,15 +53,15 @@ class Sortie:
 class Doublure:
     """Tient la place de l annuaire : des attributs deja decoupes."""
 
-    def __init__(self, entrees=None, comptes=None, fqdn=(), base="dc=exemple,dc=test"):
-        self.entrees = entrees or {}
+    def __init__(self, par_dn=None, comptes=None, fqdn=(), base="dc=exemple,dc=test"):
+        self.par_dn = par_dn or {}
         self.comptes = comptes or {}
         self.fqdn = fqdn
         self.base = base
         self.url = "ldapi://doublure"
 
     def entree(self, dn, demandes=()):
-        return self.entrees.get(dn, {})
+        return self.par_dn.get(dn, {})
 
     def compter(self, base, filtre):
         return self.comptes.get((base, filtre), 0)
@@ -337,7 +339,7 @@ class EtatDesServices(unittest.TestCase):
 
 class CachesDeLAnnuaire(unittest.TestCase):
     def mesurer(self, attributs_user_root):
-        doublure = Doublure(entrees={
+        doublure = Doublure(par_dn={
             "cn=monitor": {"currentconnections": ["3"], "threads": ["16"],
                            "readwaiters": ["0"], "currentconnectionsatmaxthreads": ["0"],
                            "starttime": ["20261001120000Z"]},
@@ -464,7 +466,7 @@ class CollecteComplete(unittest.TestCase):
             self.addCleanup(setattr, ef, nom, ancien)
 
         class Injoignable:
-            def __init__(self, _):
+            def __init__(self, *_):
                 raise RuntimeError("aucun socket dirsrv dans /run")
 
         ancien = ef.Annuaire
@@ -473,10 +475,59 @@ class CollecteComplete(unittest.TestCase):
 
         with contextlib.redirect_stdout(io.StringIO()) as bruit:
             self.assertEqual(ef.main(), 1)
-        self.assertIn("collecte incomplete", bruit.getvalue())
+        self.assertIn("sonde annuaire : aucun socket dirsrv", bruit.getvalue())
         s = Sortie(type("R", (), {"__str__": lambda _: open(cible).read()})())
         self.assertEqual(s.valeur("freeipa_collecte_reussie"), 0)
         self.assertGreater(s.valeur("freeipa_collecte_timestamp"), time.time() - 60)
+
+    def test_chaque_sonde_dit_son_propre_etat_pour_qu_on_sache_laquelle_est_tombee(self):
+        # « collecte en echec » n indique pas quoi reparer, et une sonde qui n a
+        # pas pu etre jouee doit compter comme en echec, pas disparaitre.
+        registre = ef.Registre()
+        sondes = ef.Sondes(registre, ef.SONDES)
+        self.assertEqual(sondes.publier(), 0)
+        s = Sortie(registre)
+        for nom in ef.SONDES:
+            self.assertEqual(s.valeur(f'freeipa_collecte_sonde_reussie{{sonde="{nom}"}}'), 0, nom)
+
+
+class SondesIndependantes(unittest.TestCase):
+    """Une sonde en panne ne doit pas emporter la collecte entiere.
+
+    ipactl absent ne dit rien des certificats, et un annuaire injoignable ne
+    dit rien de Kerberos : tout perdre sur une panne, c est perdre la mesure
+    qui aurait nomme la cause.
+    """
+
+    def test_une_sonde_en_panne_ne_prive_pas_des_autres(self):
+        registre = ef.Registre()
+        sondes = ef.Sondes(registre, ("qui_tombe", "qui_marche"))
+
+        def tombe():
+            raise RuntimeError("ipactl introuvable")
+
+        with contextlib.redirect_stdout(io.StringIO()) as bruit:
+            self.assertIsNone(sondes.jouer("qui_tombe", tombe))
+        self.assertIn("sonde qui_tombe : ipactl introuvable", bruit.getvalue())
+        sondes.jouer("qui_marche", lambda: None)
+        sondes.publier()
+        s = Sortie(registre)
+        self.assertEqual(s.valeur('freeipa_collecte_sonde_reussie{sonde="qui_tombe"}'), 0)
+        self.assertEqual(s.valeur('freeipa_collecte_sonde_reussie{sonde="qui_marche"}'), 1)
+
+    def test_la_collecte_n_est_reussie_que_si_toutes_les_sondes_aboutissent(self):
+        registre = ef.Registre()
+        sondes = ef.Sondes(registre, ("a", "b"))
+        sondes.jouer("a", lambda: None)
+        self.assertEqual(sondes.publier(), 0)
+        sondes.jouer("b", lambda: None)
+        self.assertEqual(sondes.publier(), 1)
+
+    def test_une_sonde_rend_ce_que_le_collecteur_a_produit(self):
+        # annuaire() rend les compteurs que connexions() lit ensuite : les
+        # perdre reviendrait a enchainer sur du vide.
+        sondes = ef.Sondes(ef.Registre(), ("a",))
+        self.assertEqual(sondes.jouer("a", lambda x: {"vu": x}, 3), {"vu": 3})
 
 
 class CheminsSysteme(unittest.TestCase):
@@ -591,6 +642,220 @@ class SuffixeDuDomaine(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             a.base
 
+
+# LDIF releve tel quel sur deux replicas 389-DS 2.4.6 en multi-maitre.
+REPLICAS = """dn: cn=replica,cn=dc\\3Dexemple\\2Cdc\\3Dtest,cn=mapping tree,cn=config
+nsDS5ReplicaRoot: dc=exemple,dc=test
+nsDS5ReplicaId: 1
+nsDS5ReplicaType: 3
+nsds5ReplicaChangeCount: 10
+nsds50ruv: {replicageneration} 6ac8d195000000010000
+nsds50ruv: {replica 1 ldap://ds1.exemple.test:3389} 6ac8d19b000100010000 6ac8d1fa000000010000
+nsds50ruv: {replica 2 ldap://ds2.exemple.test:3389} 6ac8d19e000100020000 6ac8d26c000000020000
+"""
+
+SAIN = ('nsds5replicaLastUpdateStatus: Error (0) Replica acquired successfully:'
+        ' Incremental update succeeded\n'
+        'nsds5replicaLastUpdateStatusJSON: {"state": "green", "ldap_rc": "0",'
+        ' "ldap_rc_text": "Success", "repl_rc": "0", "repl_rc_text": "replica acquired"}\n')
+ECHEC = ('nsds5replicaLastUpdateStatus: Error (-1) Problem connecting to replica'
+         ' - LDAP error: Can\'t contact LDAP server (connection error)\n'
+         'nsds5replicaLastUpdateStatusJSON: {"state": "red", "ldap_rc": "-1",'
+         ' "ldap_rc_text": "Can\'t contact LDAP server", "repl_rc": "16"}\n')
+
+
+def accord(statut=SAIN, extra=""):
+    return ("dn: cn=vers-ds2,cn=replica,cn=dc\\3Dexemple\\2Cdc\\3Dtest,cn=mapping tree,cn=config\n"
+            "cn: vers-ds2\n"
+            "nsDS5ReplicaRoot: dc=exemple,dc=test\n"
+            "nsDS5ReplicaHost: ds2.exemple.test\n"
+            "nsDS5ReplicaPort: 3389\n"
+            "nsds5replicaUpdateInProgress: FALSE\n"
+            "nsds5replicaLastUpdateEnd: 20261009113622Z\n"
+            "nsds5replicaChangesSentSinceStartup:: MTo4LzAg\n" + statut + extra)
+
+
+class HeureGeneralisee(unittest.TestCase):
+    """Un seul analyseur de date, employe par l annuaire et par la replication."""
+
+    def test_une_heure_generalisee_ldap_devient_une_epoque_unix(self):
+        self.assertEqual(ef.epoque("20261009113622Z"), 1791545782)
+
+    def test_le_fuseau_est_utc_et_non_celui_de_la_machine(self):
+        # Sans tzinfo explicite, Python lirait l heure locale et decalerait tout.
+        self.assertEqual(ef.epoque("19700101000000Z"), 0)
+
+    def test_une_date_illisible_rend_le_defaut_au_lieu_de_lever(self):
+        self.assertEqual(ef.epoque("pas une date", defaut=-1), -1)
+
+
+class LectureDePlusieursEntrees(unittest.TestCase):
+    """Les accords de replication sont plusieurs : les fusionner les perdrait."""
+
+    def annuaire(self, *sorties):
+        self.commande = Commande(*sorties)
+        ancien = ef.subprocess.run
+        ef.subprocess.run = self.commande
+        self.addCleanup(setattr, ef.subprocess, "run", ancien)
+
+        class SansSocket(ef.Annuaire):
+            @staticmethod
+            def _socket(_instance):
+                return "/run/slapd-doublure.socket"
+
+        return SansSocket(base="dc=exemple,dc=test")
+
+    def test_deux_entrees_sont_rendues_separement_et_non_fusionnees(self):
+        a = self.annuaire("dn: cn=a\ncn: a\ndn: cn=b\ncn: b\n")
+        trouvees = a.entrees("cn=config", "(objectclass=*)", ["cn"])
+        self.assertEqual([e["cn"] for e in trouvees], [["a"], ["b"]])
+
+    def test_une_valeur_encodee_en_base64_est_decodee(self):
+        # ldapsearch ecrit « attribut:: » pour ce qui n est pas imprimable, et
+        # les compteurs de replication en font partie.
+        a = self.annuaire("dn: cn=a\nnsds5replicaChangesSentSinceStartup:: MTo4LzAg\n")
+        trouvees = a.entrees("cn=config", "(objectclass=*)", [])
+        self.assertEqual(trouvees[0]["nsds5replicachangessentsincestartup"], ["1:8/0"])
+
+    def test_un_attribut_avant_tout_dn_est_ignore_plutot_que_de_lever(self):
+        a = self.annuaire("cn: orphelin\ndn: cn=a\ncn: a\n")
+        self.assertEqual(a.entrees("cn=config", "(objectclass=*)", []), [{"dn": ["cn=a"], "cn": ["a"]}])
+
+
+class SanteDesAccords(unittest.TestCase):
+    """L etat d un accord se lit sans se faire piéger par le texte du statut."""
+
+    def test_un_accord_sain_est_reconnu_malgre_un_texte_qui_commence_par_error(self):
+        # 389-DS ecrit « Error (0) ... succeeded » quand tout va bien : chercher
+        # le mot Error rendrait tout accord sain en panne.
+        self.assertEqual(ef.sante_accord({
+            "nsds5replicalastupdatestatusjson": ['{"state": "green"}']}), 2)
+
+    def test_un_accord_en_echec_est_distingue_d_un_accord_sain(self):
+        self.assertEqual(ef.sante_accord({
+            "nsds5replicalastupdatestatusjson": ['{"state": "red"}']}), 0)
+
+    def test_un_accord_degrade_n_est_ni_sain_ni_en_echec(self):
+        self.assertEqual(ef.sante_accord({
+            "nsds5replicalastupdatestatusjson": ['{"state": "amber"}']}), 1)
+
+    def test_sans_le_champ_json_le_code_entre_parentheses_du_texte_fait_foi(self):
+        # Les 389-DS anterieurs a 1.4 n ont pas le champ JSON.
+        self.assertEqual(ef.sante_accord({
+            "nsds5replicalastupdatestatus": ["Error (0) Incremental update succeeded"]}), 2)
+        self.assertEqual(ef.sante_accord({
+            "nsds5replicalastupdatestatus": ["Error (-1) Problem connecting to replica"]}), 0)
+
+    def test_un_json_illisible_vaut_indetermine_et_non_une_panne(self):
+        # Une alerte fausse coute plus cher qu une alerte absente.
+        self.assertEqual(ef.sante_accord({
+            "nsds5replicalastupdatestatusjson": ["{ceci n est pas du json"]}), 1)
+
+    def test_un_etat_json_inconnu_vaut_indetermine_plutot_qu_une_panne(self):
+        # Une version a venir de 389-DS peut nommer un etat que nous ignorons.
+        self.assertEqual(ef.sante_accord({
+            "nsds5replicalastupdatestatusjson": ['{"state": "mauve"}']}), 1)
+
+    def test_un_statut_absent_vaut_indetermine(self):
+        self.assertEqual(ef.sante_accord({}), 1)
+
+
+class EtatDeLaReplication(unittest.TestCase):
+    """Chaque serveur ne publie que sa propre vue : la comparaison est en PromQL."""
+
+    def collecter(self, *sorties):
+        self.commande = Commande(*sorties)
+        ancien = ef.subprocess.run
+        ef.subprocess.run = self.commande
+        self.addCleanup(setattr, ef.subprocess, "run", ancien)
+
+        class SansSocket(ef.Annuaire):
+            @staticmethod
+            def _socket(_instance):
+                return "/run/slapd-doublure.socket"
+
+        registre = ef.Registre()
+        ef.replication(SansSocket(base="dc=exemple,dc=test"), registre)
+        return Sortie(registre)
+
+    def test_un_serveur_seul_sans_replication_ne_fait_pas_echouer_la_collecte(self):
+        s = self.collecter("")
+        self.assertEqual(s.valeur("freeipa_replication_suffixes"), 0)
+        self.assertNotIn("freeipa_replication_accords", s.series)
+
+    def test_le_ruv_donne_une_date_par_fournisseur_ce_qui_permet_de_les_comparer(self):
+        s = self.collecter(REPLICAS, "", accord())
+        self.assertEqual(s.valeur('freeipa_replication_ruv_timestamp{fournisseur='
+                                  '"ldap://ds1.exemple.test:3389",replica="1",'
+                                  'suffixe="dc=exemple,dc=test"}'), 1791545850)
+        self.assertEqual(s.valeur('freeipa_replication_ruv_timestamp{fournisseur='
+                                  '"ldap://ds2.exemple.test:3389",replica="2",'
+                                  'suffixe="dc=exemple,dc=test"}'), 1791545964)
+
+    def test_la_generation_du_replica_n_est_pas_prise_pour_un_fournisseur(self):
+        # « {replicageneration} » n a pas d identifiant : il ne doit pas entrer.
+        s = self.collecter(REPLICAS, "", accord())
+        self.assertEqual(len([l for l in s.series if l.startswith(
+            "freeipa_replication_ruv_timestamp{")]), 2)
+
+    def test_un_fournisseur_encore_sans_changement_ne_produit_pas_de_serie(self):
+        neuf = ("dn: cn=replica,cn=mapping tree,cn=config\n"
+                "nsDS5ReplicaRoot: dc=exemple,dc=test\n"
+                "nsds50ruv: {replica 3 ldap://ds3.exemple.test:3389}\n")
+        s = self.collecter(neuf, "", "")
+        self.assertEqual([l for l in s.series if l.startswith(
+            "freeipa_replication_ruv_timestamp{")], [])
+
+    def test_les_compteurs_d_envoi_encodes_en_base64_sont_decodes(self):
+        s = self.collecter(REPLICAS, "", accord())
+        e = ('{accord="vers-ds2",pair="ds2.exemple.test",suffixe="dc=exemple,dc=test"}')
+        self.assertEqual(s.valeur("freeipa_replication_accord_changements_envoyes_total" + e), 8)
+        self.assertEqual(s.valeur("freeipa_replication_accord_changements_omis_total" + e), 0)
+
+    def test_un_accord_en_panne_est_signale_alors_que_le_serveur_repond(self):
+        # Le cas que up ne voit pas : les deux serveurs debout, la replication muette.
+        s = self.collecter(REPLICAS, "", accord(ECHEC))
+        self.assertEqual(s.valeur('freeipa_replication_accord_etat{accord="vers-ds2",'
+                                  'pair="ds2.exemple.test",suffixe="dc=exemple,dc=test"}'), 0)
+
+    def test_les_deux_suffixes_repliques_d_un_serveur_freeipa_sont_distingues(self):
+        # Un serveur FreeIPA avec autorite replique aussi o=ipaca.
+        deux = REPLICAS + ("dn: cn=replica,cn=o\\3Dipaca,cn=mapping tree,cn=config\n"
+                           "nsDS5ReplicaRoot: o=ipaca\n"
+                           "nsDS5ReplicaId: 1181\n")
+        s = self.collecter(deux, "", "", accord())
+        self.assertEqual(s.valeur("freeipa_replication_suffixes"), 2)
+        self.assertEqual(s.valeur('freeipa_replication_identifiant{suffixe="o=ipaca"}'), 1181)
+
+    def test_les_entrees_en_conflit_sont_comptees_dans_le_suffixe_concerne(self):
+        s = self.collecter(REPLICAS, "dn: nsuniqueid=1+uid=alice\ndn: nsuniqueid=2+uid=bob\n", accord())
+        self.assertEqual(s.valeur('freeipa_replication_conflits{suffixe="dc=exemple,dc=test"}'), 2)
+
+    def test_les_conflits_sont_cherches_dans_le_suffixe_et_non_dans_la_configuration(self):
+        self.collecter(REPLICAS, "", accord())
+        bases = [argv[argv.index("-b") + 1] for argv in self.commande.appels]
+        self.assertIn("dc=exemple,dc=test", bases)
+
+    def test_le_mot_de_passe_du_compte_de_replication_n_est_jamais_demande(self):
+        # Liste blanche d attributs : il vit dans la meme entree que le statut.
+        self.collecter(REPLICAS, "", accord())
+        demandes = " ".join(" ".join(argv) for argv in self.commande.appels).lower()
+        for interdit in ("credential", "passwd", "password", "nsds5replicabinddn"):
+            self.assertNotIn(interdit, demandes)
+
+    def test_une_date_de_derniere_mise_a_jour_absente_ne_devient_pas_zero(self):
+        # Une epoque a zero s afficherait comme 1970 et declencherait l alerte de retard.
+        sans_date = accord().replace("nsds5replicaLastUpdateEnd: 20261009113622Z\n", "")
+        s = self.collecter(REPLICAS, "", sans_date)
+        self.assertEqual([l for l in s.series if l.startswith(
+            "freeipa_replication_accord_derniere_maj_timestamp{")], [])
+
+    def test_une_mise_a_jour_en_cours_est_rapportee_telle_quelle(self):
+        en_cours = accord().replace("nsds5replicaUpdateInProgress: FALSE",
+                                    "nsds5replicaUpdateInProgress: TRUE")
+        s = self.collecter(REPLICAS, "", en_cours)
+        self.assertEqual(s.valeur('freeipa_replication_accord_en_cours{accord="vers-ds2",'
+                                  'pair="ds2.exemple.test",suffixe="dc=exemple,dc=test"}'), 1)
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

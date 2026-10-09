@@ -1,4 +1,6 @@
 #!/bin/sh
+# Copyright (C) 2026 gtranche
+# SPDX-License-Identifier: GPL-3.0-or-later
 # Joue les tests unitaires des alertes avec promtool, sur les regles RENDUES :
 # ce sont celles qui seront appliquees, pas le modele.
 #

@@ -1,10 +1,13 @@
 #!/usr/bin/env python3
+# Copyright (C) 2026 gtranche
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Expose l'etat de FreeIPA au collecteur textfile de node_exporter.
 
 Tout passe par le socket local de l'annuaire, qui authentifie root sans mot de
 passe : aucun secret n'est stocke ni manipule.
 """
 
+import base64
 import json
 import os
 import re
@@ -84,6 +87,26 @@ class Annuaire:
             attributs.setdefault(cle.strip().lower(), []).append(valeur.strip())
         return attributs
 
+    def entrees(self, base, filtre, demandes=(), portee="sub"):
+        """Rend une liste d entrees, chacune en dictionnaire de listes."""
+        trouvees = []
+        for ligne in self._appeler(base, filtre, list(demandes), portee).splitlines():
+            if ligne.startswith("#") or ":" not in ligne:
+                continue
+            cle, _, valeur = ligne.partition(":")
+            # « attribut:: valeur » : ldapsearch encode en base64 ce qui n est
+            # pas du texte imprimable, et les compteurs de replication le sont.
+            if valeur.startswith(":"):
+                try:
+                    valeur = base64.b64decode(valeur[1:].strip()).decode("utf-8", "replace")
+                except ValueError:
+                    valeur = ""
+            if cle.strip().lower() == "dn":
+                trouvees.append({})
+            if trouvees:
+                trouvees[-1].setdefault(cle.strip().lower(), []).append(str(valeur).strip())
+        return trouvees
+
     def compter(self, base, filtre):
         sortie = self._appeler(base, filtre, ["dn"], portee="sub")
         return sum(1 for l in sortie.splitlines() if l.startswith("dn:"))
@@ -114,6 +137,15 @@ class Registre:
 
     def __str__(self):
         return "\n".join(self.lignes) + "\n"
+
+
+def epoque(valeur, defaut=0):
+    """Convertit une heure generalisee LDAP (20261009113622Z) en epoque Unix."""
+    try:
+        t = datetime.strptime(valeur.rstrip("Z"), "%Y%m%d%H%M%S")
+        return int(t.replace(tzinfo=timezone.utc).timestamp())
+    except ValueError:
+        return defaut
 
 
 def entier(attributs, cle, defaut=0):
@@ -212,9 +244,8 @@ def annuaire(a, registre):
 
     debut = m.get("starttime", [""])[0]
     if debut:
-        t = datetime.strptime(debut.rstrip("Z"), "%Y%m%d%H%M%S").replace(tzinfo=timezone.utc)
         registre.declarer("freeipa_ldap_demarrage_timestamp", "Date de demarrage de l annuaire.")
-        registre.ajouter("freeipa_ldap_demarrage_timestamp", int(t.timestamp()))
+        registre.ajouter("freeipa_ldap_demarrage_timestamp", epoque(debut))
 
     return m
 
@@ -229,8 +260,7 @@ def connexions(m, registre):
         if not trouve:
             continue
         _, ouverture, ops_init, _, dn, ip = trouve.groups()
-        t = datetime.strptime(ouverture, "%Y%m%d%H%M%S").replace(tzinfo=timezone.utc)
-        duree = maxima = maintenant - t.timestamp()
+        duree = maxima = maintenant - epoque(ouverture)
         identite = lisible(dn)
         cle = (identite, ip)
         etat = par_identite.setdefault(cle, {"nombre": 0, "duree_max": 0.0, "ops": 0})
@@ -429,6 +459,111 @@ def certificats(registre):
         registre.ajouter("freeipa_certificat_expiration_timestamp", int(t.timestamp()), certificat=nom)
 
 
+# Liste blanche d attributs : l entree de l accord porte aussi le mot de passe
+# du compte de replication, et rien ne doit pouvoir le faire entrer en metrique.
+ACCORD_ATTRIBUTS = ["cn", "nsDS5ReplicaRoot", "nsDS5ReplicaHost", "nsDS5ReplicaPort",
+                    "nsds5replicaLastUpdateStatus", "nsds5replicaLastUpdateStatusJSON",
+                    "nsds5replicaUpdateInProgress", "nsds5replicaLastUpdateEnd",
+                    "nsds5replicaChangesSentSinceStartup"]
+REPLICA_ATTRIBUTS = ["nsDS5ReplicaRoot", "nsDS5ReplicaId", "nsDS5ReplicaType",
+                     "nsds5ReplicaChangeCount", "nsds50ruv"]
+
+ETATS = {"green": 2, "amber": 1, "red": 0}
+# « 1:8/0 » : identifiant du fournisseur, changements envoyes, changements omis.
+ENVOIS = re.compile(r"(\d+):(\d+)/(\d+)")
+# « {replica 2 ldap://hote:389} <csn mini> <csn maxi> », les CSN pouvant manquer.
+RUV = re.compile(r"\{replica (\d+) ([^}]*)\}((?:\s+[0-9a-fA-F]+)*)")
+CODE_STATUT = re.compile(r"Error \((-?\d+)\)")
+
+
+def sante_accord(attributs):
+    """Sante d un accord : 2 sain, 1 indetermine ou degrade, 0 en echec.
+
+    Le champ JSON tranche. A defaut, le texte : il commence par « Error (0) »
+    meme quand tout va bien, donc seul le code entre parentheses se lit.
+    """
+    brut = attributs.get("nsds5replicalastupdatestatusjson", [])
+    if brut:
+        try:
+            return ETATS.get(json.loads(brut[0]).get("state", ""), 1)
+        except (ValueError, TypeError, AttributeError):
+            pass
+    trouve = CODE_STATUT.search(attributs.get("nsds5replicalastupdatestatus", [""])[0])
+    if trouve:
+        return 2 if trouve.group(1) == "0" else 0
+    return 1
+
+
+def replication(a, registre):
+    """Etat de la replication, du point de vue de ce serveur seul.
+
+    Chaque serveur ne connait que ce qu il a recu : le retard reel se calcule
+    en comparant la meme serie entre serveurs, pas sur un serveur isole.
+    """
+    replicas = a.entrees("cn=config", "(objectclass=nsds5replica)", REPLICA_ATTRIBUTS)
+    registre.declarer("freeipa_replication_suffixes", "Nombre de suffixes repliques.")
+    registre.ajouter("freeipa_replication_suffixes", len(replicas))
+    if not replicas:
+        return
+
+    registre.declarer("freeipa_replication_identifiant", "Identifiant de ce replica.")
+    registre.declarer("freeipa_replication_type", "Role 389-DS : 3 fournisseur, 2 concentrateur.")
+    registre.declarer("freeipa_replication_changements", "Changements enregistres par ce replica.")
+    registre.declarer("freeipa_replication_ruv_timestamp",
+                      "Date du dernier changement connu de ce serveur pour chaque fournisseur.")
+    registre.declarer("freeipa_replication_conflits", "Entrees en conflit de replication.")
+    for r in replicas:
+        suffixe = r.get("nsds5replicaroot", [""])[0]
+        if not suffixe:
+            continue
+        e = {"suffixe": suffixe}
+        registre.ajouter("freeipa_replication_identifiant", entier(r, "nsds5replicaid"), **e)
+        registre.ajouter("freeipa_replication_type", entier(r, "nsds5replicatype"), **e)
+        registre.ajouter("freeipa_replication_changements", entier(r, "nsds5replicachangecount"), **e)
+        for brut in r.get("nsds50ruv", []):
+            trouve = RUV.search(brut)
+            if not trouve:
+                continue
+            identifiant, fournisseur, csn = trouve.groups()
+            dernier = csn.split()
+            if not dernier:
+                continue
+            registre.ajouter("freeipa_replication_ruv_timestamp", int(dernier[-1][:8], 16),
+                             replica=identifiant, fournisseur=fournisseur, **e)
+        registre.ajouter("freeipa_replication_conflits",
+                         a.compter(suffixe, "(nsds5ReplConflict=*)"), **e)
+
+    accords = a.entrees("cn=config", "(objectclass=nsds5replicationagreement)", ACCORD_ATTRIBUTS)
+    registre.declarer("freeipa_replication_accords", "Nombre d accords de replication sortants.")
+    registre.ajouter("freeipa_replication_accords", len(accords))
+    registre.declarer("freeipa_replication_accord_etat",
+                      "Sante d un accord : 2 sain, 1 indetermine, 0 en echec.")
+    registre.declarer("freeipa_replication_accord_en_cours", "1 si une mise a jour est en cours.")
+    registre.declarer("freeipa_replication_accord_derniere_maj_timestamp",
+                      "Fin de la derniere mise a jour reussie de cet accord.")
+    registre.declarer("freeipa_replication_accord_changements_envoyes_total",
+                      "Changements envoyes par cet accord depuis le demarrage.", "counter")
+    registre.declarer("freeipa_replication_accord_changements_omis_total",
+                      "Changements omis par cet accord depuis le demarrage.", "counter")
+    for c in accords:
+        e = {"accord": c.get("cn", [""])[0],
+             "suffixe": c.get("nsds5replicaroot", [""])[0],
+             "pair": c.get("nsds5replicahost", [""])[0]}
+        registre.ajouter("freeipa_replication_accord_etat", sante_accord(c), **e)
+        registre.ajouter("freeipa_replication_accord_en_cours",
+                         1 if c.get("nsds5replicaupdateinprogress", [""])[0].upper() == "TRUE" else 0,
+                         **e)
+        fin = epoque(c.get("nsds5replicalastupdateend", [""])[0])
+        if fin:
+            registre.ajouter("freeipa_replication_accord_derniere_maj_timestamp", fin, **e)
+        envoyes = omis = 0
+        for identifiant, envoi, saut in ENVOIS.findall(
+                c.get("nsds5replicachangessentsincestartup", [""])[0]):
+            envoyes += int(envoi)
+            omis += int(saut)
+        registre.ajouter("freeipa_replication_accord_changements_envoyes_total", envoyes, **e)
+        registre.ajouter("freeipa_replication_accord_changements_omis_total", omis, **e)
+
 def ecrire(chemin, contenu):
     """Ecriture atomique : node_exporter ne doit jamais lire un fichier partiel."""
     descripteur, provisoire = tempfile.mkstemp(dir=os.path.dirname(chemin), suffix=".tmp")
@@ -442,23 +577,58 @@ def ecrire(chemin, contenu):
         raise
 
 
+SONDES = ("services", "annuaire", "etat_annuaire", "connexions", "replication",
+          "inventaire", "machines", "kerberos", "temps_de_reponse", "certificats")
+
+
+class Sondes:
+    """Joue les collecteurs un a un, sans qu un seul puisse emporter les autres.
+
+    Une sonde qui n a pas pu etre jouee compte comme en echec : sinon un
+    annuaire injoignable laisserait croire que tout ce qu il porte va bien.
+    """
+
+    def __init__(self, registre, attendues):
+        self._registre = registre
+        self._etats = {nom: 0 for nom in attendues}
+
+    def jouer(self, nom, action, *args):
+        try:
+            resultat = action(*args)
+        except Exception as erreur:            # noqa: BLE001
+            print(f"sonde {nom} : {erreur}")
+            return None
+        self._etats[nom] = 1
+        return resultat
+
+    def publier(self):
+        """Publie l etat de chaque sonde et rend 1 si toutes ont abouti."""
+        for nom, etat in sorted(self._etats.items()):
+            self._registre.ajouter("freeipa_collecte_sonde_reussie", etat, sonde=nom)
+        return int(all(self._etats.values()))
+
+
 def main():
     debut = time.time()
     registre = Registre()
-    reussie = 1
-    try:
-        a = Annuaire(INSTANCE, BASE)
-        services(registre)
-        m = annuaire(a, registre)
-        connexions(m, registre)
-        inventaire(a, registre)
-        machines(a, registre)
-        kerberos(registre)
-        temps_de_reponse(a, registre)
-        certificats(registre)
-    except Exception as erreur:            # noqa: BLE001
-        reussie = 0
-        print(f"collecte incomplete : {erreur}")
+    registre.declarer("freeipa_collecte_sonde_reussie",
+                      "1 si cette sonde s est achevee sans erreur.")
+    sondes = Sondes(registre, SONDES)
+
+    sondes.jouer("services", services, registre)
+    a = sondes.jouer("annuaire", Annuaire, INSTANCE, BASE)
+    if a is not None:
+        m = sondes.jouer("etat_annuaire", annuaire, a, registre)
+        if m is not None:
+            sondes.jouer("connexions", connexions, m, registre)
+        sondes.jouer("replication", replication, a, registre)
+        sondes.jouer("inventaire", inventaire, a, registre)
+        sondes.jouer("machines", machines, a, registre)
+    sondes.jouer("kerberos", kerberos, registre)
+    if a is not None:
+        sondes.jouer("temps_de_reponse", temps_de_reponse, a, registre)
+    sondes.jouer("certificats", certificats, registre)
+    reussie = sondes.publier()
 
     registre.declarer("freeipa_collecte_reussie", "1 si la collecte s est achevee sans erreur.")
     registre.ajouter("freeipa_collecte_reussie", reussie)

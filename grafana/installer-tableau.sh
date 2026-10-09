@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# Copyright (C) 2026 gtranche
+# SPDX-License-Identifier: GPL-3.0-or-later
 # Pose le tableau Grafana : ConfigMap + volume + montage dans le Deployment.
 #
 # Grafana ne decouvre rien tout seul : chaque tableau est un volume explicite

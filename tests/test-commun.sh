@@ -1,4 +1,6 @@
 #!/bin/sh
+# Copyright (C) 2026 gtranche
+# SPDX-License-Identifier: GPL-3.0-or-later
 # Verifie la citation des arguments. ssh ne transporte pas une liste
 # d arguments mais une ligne de commande : un jsonpath mal cite arrive
 # tronque au shell distant, qui refuse la commande ou, pire, en joue une autre.

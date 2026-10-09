@@ -1,3 +1,5 @@
+# Copyright (C) 2026 gtranche
+# SPDX-License-Identifier: GPL-3.0-or-later
 # Ce que ces tests protegent : les expressions ou une erreur ne se verrait pas
 # a la lecture — le filtre ancre de FreeipaLdapLent, qui doit laisser passer la
 # mesure d etablissement de connexion, et la conjonction de FreeipaCacheSature,
@@ -127,6 +129,21 @@ tests:
     exp_alerts: []
 
 - interval: 1m
+  name: une collecte en echec part en avertissement et nomme le serveur fautif
+  input_series:
+  # Un seul des deux serveurs cesse de collecter : l autre ne doit pas etre
+  # nomme, et le premier doit l etre.
+  - series: 'freeipa_collecte_reussie{instance="idm1:9100"}'
+    values: '1+0x5 0+0x40'
+  - series: 'freeipa_collecte_reussie{instance="idm2:9100"}'
+    values: '1+0x46'
+  alert_rule_test:
+  - eval_time: 20m
+    alertname: FreeipaCollecteEnEchec
+    exp_alerts:
+    - exp_labels: {severity: warning, instance: "idm1:9100"}
+
+- interval: 1m
   name: les refus kerberos ne comptent qu au-dela de vingt par quart d heure
   input_series:
   - series: 'freeipa_kerberos_echecs_total'
@@ -198,3 +215,209 @@ tests:
     alertname: FreeipaConnexionsSaturees
     exp_alerts:
     - exp_labels: {severity: warning}
+
+# A partir d ici, les series portent deux instances : c est la seule facon de
+# voir les defauts d appariement et d agregation d un domaine actif-actif.
+
+- interval: 1m
+  name: les refus Kerberos sont comptes par serveur et non additionnes entre serveurs
+  input_series:
+  # Trois serveurs a 8 refus par quart d heure : chacun sous le seuil de 20,
+  # mais un sum() sans by en ferait 24 et alerterait sans nommer personne.
+  - series: 'freeipa_kerberos_echecs_total{instance="idm1:9100"}'
+    values: '0+0.5x40'
+  - series: 'freeipa_kerberos_echecs_total{instance="idm2:9100"}'
+    values: '0+0.5x40'
+  - series: 'freeipa_kerberos_echecs_total{instance="idm3:9100"}'
+    values: '0+0.5x40'
+  alert_rule_test:
+  - eval_time: 35m
+    alertname: FreeipaEchecsKerberos
+    exp_alerts: []
+
+- interval: 1m
+  name: un seul serveur reellement en cause est nomme sans entrainer les autres
+  input_series:
+  - series: 'freeipa_kerberos_echecs_total{instance="idm1:9100"}'
+    values: '0+2x40'
+  - series: 'freeipa_kerberos_echecs_total{instance="idm2:9100"}'
+    values: '0+0.1x40'
+  alert_rule_test:
+  - eval_time: 35m
+    alertname: FreeipaEchecsKerberos
+    exp_alerts:
+    - exp_labels: {severity: warning, instance: 'idm1:9100'}
+
+- interval: 1m
+  name: le cache plein d un serveur ne declenche pas l alerte sur un autre serveur
+  input_series:
+  # idm1 a un cache plein mais efficace, idm2 un cache peu rempli et peu lu.
+  # Sans instance dans le on(), le taux de idm2 s apparie a l occupation de
+  # idm1 et l alerte sort sur un serveur qui n a aucun probleme.
+  - series: 'freeipa_ldap_cache_taux{instance="idm1:9100",base="userRoot",cache="entrees"}'
+    values: '99+0x80'
+  - series: 'freeipa_ldap_cache_occupation_octets{instance="idm1:9100",base="userRoot",cache="entrees"}'
+    values: '950+0x80'
+  - series: 'freeipa_ldap_cache_plafond_octets{instance="idm1:9100",base="userRoot",cache="entrees"}'
+    values: '1000+0x80'
+  - series: 'freeipa_ldap_cache_taux{instance="idm2:9100",base="userRoot",cache="entrees"}'
+    values: '20+0x80'
+  - series: 'freeipa_ldap_cache_occupation_octets{instance="idm2:9100",base="userRoot",cache="entrees"}'
+    values: '100+0x80'
+  - series: 'freeipa_ldap_cache_plafond_octets{instance="idm2:9100",base="userRoot",cache="entrees"}'
+    values: '1000+0x80'
+  alert_rule_test:
+  - eval_time: 75m
+    alertname: FreeipaCacheSature
+    exp_alerts: []
+
+- interval: 1m
+  name: un accord de replication en echec est signale alors que les deux serveurs repondent
+  input_series:
+  - series: 'up{job="@NOM_JOB@",instance="idm1:9100"}'
+    values: '1+0x40'
+  - series: 'up{job="@NOM_JOB@",instance="idm2:9100"}'
+    values: '1+0x40'
+  - series: 'freeipa_replication_accord_etat{instance="idm1:9100",accord="vers-idm2",pair="idm2.exemple.test",suffixe="dc=exemple,dc=test"}'
+    values: '0+0x40'
+  - series: 'freeipa_replication_accord_etat{instance="idm2:9100",accord="vers-idm1",pair="idm1.exemple.test",suffixe="dc=exemple,dc=test"}'
+    values: '2+0x40'
+  alert_rule_test:
+  - eval_time: 5m
+    alertname: FreeipaReplicationEnEchec
+    exp_alerts: []
+  - eval_time: 20m
+    alertname: FreeipaReplicationEnEchec
+    exp_alerts:
+    - exp_labels:
+        severity: critical
+        instance: 'idm1:9100'
+        accord: vers-idm2
+        pair: idm2.exemple.test
+        suffixe: dc=exemple,dc=test
+  - eval_time: 20m
+    alertname: FreeipaAnnuaireInjoignable
+    exp_alerts: []
+
+- interval: 1m
+  name: un etat de replication indetermine ne se confond pas avec un echec
+  input_series:
+  - series: 'freeipa_replication_accord_etat{instance="idm1:9100",accord="vers-idm2",pair="idm2.exemple.test",suffixe="dc=exemple,dc=test"}'
+    values: '1+0x80'
+  alert_rule_test:
+  - eval_time: 60m
+    alertname: FreeipaReplicationEnEchec
+    exp_alerts: []
+  - eval_time: 60m
+    alertname: FreeipaReplicationIndeterminee
+    exp_alerts:
+    - exp_labels:
+        severity: warning
+        instance: 'idm1:9100'
+        accord: vers-idm2
+        pair: idm2.exemple.test
+        suffixe: dc=exemple,dc=test
+
+- interval: 1m
+  name: le retard de replication se voit en comparant les serveurs et non sur un seul
+  input_series:
+  # idm1 connait le changement 1800 du replica 1 ; idm2 en est reste a 600.
+  # Aucun des deux ne porte seul l information : seule la difference la donne.
+  - series: 'freeipa_replication_ruv_timestamp{instance="idm1:9100",replica="1",fournisseur="ldap://idm1.exemple.test:389",suffixe="dc=exemple,dc=test"}'
+    values: '1800+0x40'
+  - series: 'freeipa_replication_ruv_timestamp{instance="idm2:9100",replica="1",fournisseur="ldap://idm1.exemple.test:389",suffixe="dc=exemple,dc=test"}'
+    values: '600+0x40'
+  alert_rule_test:
+  - eval_time: 10m
+    alertname: FreeipaReplicationEnRetard
+    exp_alerts: []
+  - eval_time: 25m
+    alertname: FreeipaReplicationEnRetard
+    exp_alerts:
+    - exp_labels:
+        severity: warning
+        instance: 'idm2:9100'
+        replica: '1'
+        fournisseur: 'ldap://idm1.exemple.test:389'
+        suffixe: dc=exemple,dc=test
+
+- interval: 1m
+  name: deux serveurs converges ne declenchent aucun retard de replication
+  input_series:
+  - series: 'freeipa_replication_ruv_timestamp{instance="idm1:9100",replica="1",fournisseur="ldap://idm1.exemple.test:389",suffixe="dc=exemple,dc=test"}'
+    values: '1800+0x40'
+  - series: 'freeipa_replication_ruv_timestamp{instance="idm2:9100",replica="1",fournisseur="ldap://idm1.exemple.test:389",suffixe="dc=exemple,dc=test"}'
+    values: '1800+0x40'
+  alert_rule_test:
+  - eval_time: 35m
+    alertname: FreeipaReplicationEnRetard
+    exp_alerts: []
+
+- interval: 1m
+  name: un serveur seul sans accord de replication ne declenche rien
+  input_series:
+  - series: 'freeipa_replication_suffixes{instance="idm1:9100"}'
+    values: '0+0x80'
+  - series: 'freeipa_replication_accords{instance="idm1:9100"}'
+    values: '0+0x80'
+  alert_rule_test:
+  - eval_time: 75m
+    alertname: FreeipaReplicaSansAccord
+    exp_alerts: []
+
+- interval: 1m
+  name: un serveur qui replique sans aucun accord sortant est signale
+  input_series:
+  - series: 'freeipa_replication_suffixes{instance="idm1:9100"}'
+    values: '2+0x80'
+  - series: 'freeipa_replication_accords{instance="idm1:9100"}'
+    values: '0+0x80'
+  alert_rule_test:
+  - eval_time: 75m
+    alertname: FreeipaReplicaSansAccord
+    exp_alerts:
+    - exp_labels: {severity: critical, instance: 'idm1:9100'}
+
+- interval: 1m
+  name: des serveurs qui ne comptent pas les memes utilisateurs sont signales
+  input_series:
+  # Les accords peuvent se declarer sains et la replication ne pas converger :
+  # la grandeur repliquee, lue sur chaque serveur, le dit quand meme.
+  - series: 'freeipa_utilisateurs{job="@NOM_JOB@",instance="idm1:9100",etat="actif"}'
+    values: '412+0x80'
+  - series: 'freeipa_utilisateurs{job="@NOM_JOB@",instance="idm2:9100",etat="actif"}'
+    values: '408+0x80'
+  alert_rule_test:
+  - eval_time: 30m
+    alertname: FreeipaDomaineDivergent
+    exp_alerts: []
+  - eval_time: 75m
+    alertname: FreeipaDomaineDivergent
+    exp_alerts:
+    - exp_labels: {severity: warning, job: '@NOM_JOB@'}
+
+- interval: 1m
+  name: deux serveurs qui comptent la meme chose ne declenchent pas de divergence
+  input_series:
+  - series: 'freeipa_utilisateurs{job="@NOM_JOB@",instance="idm1:9100",etat="actif"}'
+    values: '412+0x80'
+  - series: 'freeipa_utilisateurs{job="@NOM_JOB@",instance="idm2:9100",etat="actif"}'
+    values: '412+0x80'
+  alert_rule_test:
+  - eval_time: 75m
+    alertname: FreeipaDomaineDivergent
+    exp_alerts: []
+
+- interval: 1m
+  name: des entrees en conflit sont signalees avec le suffixe concerne
+  input_series:
+  - series: 'freeipa_replication_conflits{instance="idm1:9100",suffixe="dc=exemple,dc=test"}'
+    values: '0 0 3+0x80'
+  alert_rule_test:
+  - eval_time: 30m
+    alertname: FreeipaReplicationConflits
+    exp_alerts: []
+  - eval_time: 75m
+    alertname: FreeipaReplicationConflits
+    exp_alerts:
+    - exp_labels: {severity: warning, instance: 'idm1:9100', suffixe: 'dc=exemple,dc=test'}

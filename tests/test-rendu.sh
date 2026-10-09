@@ -1,4 +1,6 @@
 #!/bin/sh
+# Copyright (C) 2026 gtranche
+# SPDX-License-Identifier: GPL-3.0-or-later
 # Verifie que le rendu des modeles ne peut pas produire un manifeste a moitie
 # substitue : applique, il superviserait silencieusement la mauvaise machine.
 set -eu

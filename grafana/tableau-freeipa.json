@@ -35,10 +35,11 @@
             "type": "prometheus",
             "uid": "${source}"
           },
-          "expr": "freeipa_services_actifs",
+          "expr": "freeipa_services_actifs{instance=~\"$serveur\"}",
           "refId": "A",
           "format": "time_series",
-          "instant": true
+          "instant": true,
+          "legendFormat": "{{instance}}"
         }
       ],
       "options": {
@@ -51,7 +52,7 @@
         },
         "colorMode": "background",
         "graphMode": "none",
-        "textMode": "auto"
+        "textMode": "value_and_name"
       },
       "fieldConfig": {
         "defaults": {
@@ -93,10 +94,11 @@
             "type": "prometheus",
             "uid": "${source}"
           },
-          "expr": "freeipa_temps_reponse_secondes{interface=\"ldap\"}",
+          "expr": "freeipa_temps_reponse_secondes{instance=~\"$serveur\",interface=\"ldap\"}",
           "refId": "A",
           "format": "time_series",
-          "instant": true
+          "instant": true,
+          "legendFormat": "{{instance}}"
         }
       ],
       "options": {
@@ -109,7 +111,7 @@
         },
         "colorMode": "background",
         "graphMode": "none",
-        "textMode": "auto"
+        "textMode": "value_and_name"
       },
       "fieldConfig": {
         "defaults": {
@@ -156,10 +158,11 @@
             "type": "prometheus",
             "uid": "${source}"
           },
-          "expr": "freeipa_ldap_connexions_courantes",
+          "expr": "freeipa_ldap_connexions_courantes{instance=~\"$serveur\"}",
           "refId": "A",
           "format": "time_series",
-          "instant": true
+          "instant": true,
+          "legendFormat": "{{instance}}"
         }
       ],
       "options": {
@@ -172,7 +175,7 @@
         },
         "colorMode": "background",
         "graphMode": "none",
-        "textMode": "auto"
+        "textMode": "value_and_name"
       },
       "fieldConfig": {
         "defaults": {
@@ -210,7 +213,7 @@
             "type": "prometheus",
             "uid": "${source}"
           },
-          "expr": "freeipa_utilisateurs{etat=\"actif\"}",
+          "expr": "max by (job) (freeipa_utilisateurs{instance=~\"$serveur\",etat=\"actif\"})",
           "refId": "A",
           "format": "time_series",
           "instant": true
@@ -264,7 +267,7 @@
             "type": "prometheus",
             "uid": "${source}"
           },
-          "expr": "freeipa_machines",
+          "expr": "max by (job) (freeipa_machines{instance=~\"$serveur\"})",
           "refId": "A",
           "format": "time_series",
           "instant": true
@@ -318,10 +321,11 @@
             "type": "prometheus",
             "uid": "${source}"
           },
-          "expr": "freeipa_ldap_cache_taux{cache=\"entrees\"}",
+          "expr": "freeipa_ldap_cache_taux{instance=~\"$serveur\",cache=\"entrees\"}",
           "refId": "A",
           "format": "time_series",
-          "instant": true
+          "instant": true,
+          "legendFormat": "{{instance}} — {{base}}"
         }
       ],
       "options": {
@@ -334,7 +338,7 @@
         },
         "colorMode": "background",
         "graphMode": "none",
-        "textMode": "auto"
+        "textMode": "value_and_name"
       },
       "fieldConfig": {
         "defaults": {
@@ -380,10 +384,11 @@
             "type": "prometheus",
             "uid": "${source}"
           },
-          "expr": "time() - freeipa_collecte_timestamp",
+          "expr": "time() - freeipa_collecte_timestamp{instance=~\"$serveur\"}",
           "refId": "A",
           "format": "time_series",
-          "instant": true
+          "instant": true,
+          "legendFormat": "{{instance}}"
         }
       ],
       "options": {
@@ -396,7 +401,7 @@
         },
         "colorMode": "background",
         "graphMode": "none",
-        "textMode": "auto"
+        "textMode": "value_and_name"
       },
       "fieldConfig": {
         "defaults": {
@@ -442,10 +447,10 @@
             "type": "prometheus",
             "uid": "${source}"
           },
-          "expr": "freeipa_service_actif",
+          "expr": "freeipa_service_actif{instance=~\"$serveur\"}",
           "refId": "A",
           "format": "time_series",
-          "legendFormat": "{{composant}}",
+          "legendFormat": "{{instance}} — {{composant}}",
           "instant": true
         }
       ],
@@ -517,10 +522,10 @@
             "type": "prometheus",
             "uid": "${source}"
           },
-          "expr": "sum by (type) (rate(freeipa_kerberos_requetes_total[5m]))",
+          "expr": "sum by (instance, type) (rate(freeipa_kerberos_requetes_total{instance=~\"$serveur\"}[5m]))",
           "refId": "A",
           "format": "time_series",
-          "legendFormat": "{{type}}"
+          "legendFormat": "{{instance}} — {{type}}"
         }
       ],
       "options": {
@@ -568,10 +573,10 @@
             "type": "prometheus",
             "uid": "${source}"
           },
-          "expr": "sum(rate(freeipa_kerberos_echecs_total[5m])) * 60",
+          "expr": "sum by (instance) (rate(freeipa_kerberos_echecs_total{instance=~\"$serveur\"}[5m])) * 60",
           "refId": "A",
           "format": "time_series",
-          "legendFormat": "refus/min"
+          "legendFormat": "{{instance}} — refus/min"
         }
       ],
       "options": {
@@ -619,10 +624,10 @@
             "type": "prometheus",
             "uid": "${source}"
           },
-          "expr": "freeipa_temps_reponse_secondes",
+          "expr": "freeipa_temps_reponse_secondes{instance=~\"$serveur\"}",
           "refId": "A",
           "format": "time_series",
-          "legendFormat": "{{interface}}"
+          "legendFormat": "{{instance}} — {{interface}}"
         }
       ],
       "options": {
@@ -670,10 +675,10 @@
             "type": "prometheus",
             "uid": "${source}"
           },
-          "expr": "freeipa_ldap_cache_taux",
+          "expr": "freeipa_ldap_cache_taux{instance=~\"$serveur\"}",
           "refId": "A",
           "format": "time_series",
-          "legendFormat": "{{cache}}"
+          "legendFormat": "{{instance}} — {{cache}}"
         }
       ],
       "options": {
@@ -721,30 +726,30 @@
             "type": "prometheus",
             "uid": "${source}"
           },
-          "expr": "sum by (portee) (rate(freeipa_ldap_recherches_total[5m]))",
+          "expr": "sum by (instance, portee) (rate(freeipa_ldap_recherches_total{instance=~\"$serveur\"}[5m]))",
           "refId": "A",
           "format": "time_series",
-          "legendFormat": "recherches {{portee}}"
+          "legendFormat": "{{instance}} — recherches {{portee}}"
         },
         {
           "datasource": {
             "type": "prometheus",
             "uid": "${source}"
           },
-          "expr": "sum by (mode) (rate(freeipa_ldap_liens_total[5m]))",
+          "expr": "sum by (instance, mode) (rate(freeipa_ldap_liens_total{instance=~\"$serveur\"}[5m]))",
           "refId": "B",
           "format": "time_series",
-          "legendFormat": "liens {{mode}}"
+          "legendFormat": "{{instance}} — liens {{mode}}"
         },
         {
           "datasource": {
             "type": "prometheus",
             "uid": "${source}"
           },
-          "expr": "rate(freeipa_ldap_erreurs_total[5m])",
+          "expr": "rate(freeipa_ldap_erreurs_total{instance=~\"$serveur\"}[5m])",
           "refId": "C",
           "format": "time_series",
-          "legendFormat": "erreurs"
+          "legendFormat": "{{instance}} — erreurs"
         }
       ],
       "options": {
@@ -792,7 +797,7 @@
             "type": "prometheus",
             "uid": "${source}"
           },
-          "expr": "freeipa_connexions_ouvertes",
+          "expr": "label_join(freeipa_connexions_ouvertes{instance=~\"$serveur\"}, \"cle\", \" · \", \"instance\", \"identite\", \"ip\")",
           "refId": "A",
           "format": "table",
           "instant": true
@@ -802,7 +807,7 @@
             "type": "prometheus",
             "uid": "${source}"
           },
-          "expr": "freeipa_connexion_duree_max_secondes",
+          "expr": "sum by (cle) (label_join(freeipa_connexion_duree_max_secondes{instance=~\"$serveur\"}, \"cle\", \" · \", \"instance\", \"identite\", \"ip\"))",
           "refId": "B",
           "format": "table",
           "instant": true
@@ -812,7 +817,7 @@
             "type": "prometheus",
             "uid": "${source}"
           },
-          "expr": "freeipa_connexion_operations",
+          "expr": "sum by (cle) (label_join(freeipa_connexion_operations{instance=~\"$serveur\"}, \"cle\", \" · \", \"instance\", \"identite\", \"ip\"))",
           "refId": "C",
           "format": "table",
           "instant": true
@@ -822,7 +827,7 @@
         {
           "id": "joinByField",
           "options": {
-            "byField": "identite",
+            "byField": "cle",
             "mode": "outer"
           }
         },
@@ -831,47 +836,30 @@
           "options": {
             "excludeByName": {
               "Time": true,
-              "Time 1": true,
-              "Time 2": true,
-              "Time 3": true,
+              "cle": true,
               "__name__": true,
-              "__name__ 1": true,
-              "__name__ 2": true,
-              "__name__ 3": true,
-              "endpoint": true,
-              "instance": true,
               "job": true,
+              "endpoint": true,
               "namespace": true,
               "service": true,
               "host": true,
-              "endpoint 1": true,
-              "endpoint 2": true,
-              "endpoint 3": true,
-              "instance 1": true,
-              "instance 2": true,
-              "instance 3": true,
-              "job 1": true,
-              "job 2": true,
-              "job 3": true,
-              "namespace 1": true,
-              "namespace 2": true,
-              "namespace 3": true,
-              "service 1": true,
-              "service 2": true,
-              "service 3": true,
-              "host 1": true,
-              "host 2": true,
-              "host 3": true,
-              "ip 2": true,
-              "ip 3": true
+              "pod": true,
+              "container": true,
+              "prometheus": true,
+              "prometheus_replica": true
             },
             "renameByName": {
-              "identite": "Identité",
-              "ip": "Adresse",
-              "ip 1": "Adresse",
               "Value #A": "Connexions",
               "Value #B": "Âge max (s)",
-              "Value #C": "Opérations"
+              "Value #C": "Opérations",
+              "instance": "Serveur",
+              "identite": "Identité",
+              "ip": "Adresse"
+            },
+            "indexByName": {
+              "instance": 0,
+              "identite": 1,
+              "ip": 2
             }
           }
         },
@@ -929,10 +917,10 @@
             "type": "prometheus",
             "uid": "${source}"
           },
-          "expr": "freeipa_connexions_ouvertes",
+          "expr": "freeipa_connexions_ouvertes{instance=~\"$serveur\"}",
           "refId": "A",
           "format": "time_series",
-          "legendFormat": "{{identite}}"
+          "legendFormat": "{{instance}} — {{identite}}"
         }
       ],
       "options": {
@@ -980,7 +968,7 @@
             "type": "prometheus",
             "uid": "${source}"
           },
-          "expr": "freeipa_utilisateurs{etat=\"actif\"}",
+          "expr": "max by (job) (freeipa_utilisateurs{instance=~\"$serveur\",etat=\"actif\"})",
           "refId": "A",
           "format": "time_series",
           "legendFormat": "utilisateurs",
@@ -991,7 +979,7 @@
             "type": "prometheus",
             "uid": "${source}"
           },
-          "expr": "freeipa_groupes",
+          "expr": "max by (job) (freeipa_groupes{instance=~\"$serveur\"})",
           "refId": "B",
           "format": "time_series",
           "legendFormat": "groupes",
@@ -1002,7 +990,7 @@
             "type": "prometheus",
             "uid": "${source}"
           },
-          "expr": "freeipa_machines",
+          "expr": "max by (job) (freeipa_machines{instance=~\"$serveur\"})",
           "refId": "C",
           "format": "time_series",
           "legendFormat": "machines",
@@ -1013,7 +1001,7 @@
             "type": "prometheus",
             "uid": "${source}"
           },
-          "expr": "freeipa_groupes_machines",
+          "expr": "max by (job) (freeipa_groupes_machines{instance=~\"$serveur\"})",
           "refId": "D",
           "format": "time_series",
           "legendFormat": "groupes de machines",
@@ -1024,7 +1012,7 @@
             "type": "prometheus",
             "uid": "${source}"
           },
-          "expr": "freeipa_services_enregistres",
+          "expr": "max by (job) (freeipa_services_enregistres{instance=~\"$serveur\"})",
           "refId": "E",
           "format": "time_series",
           "legendFormat": "services",
@@ -1035,7 +1023,7 @@
             "type": "prometheus",
             "uid": "${source}"
           },
-          "expr": "freeipa_regles_hbac",
+          "expr": "max by (job) (freeipa_regles_hbac{instance=~\"$serveur\"})",
           "refId": "F",
           "format": "time_series",
           "legendFormat": "règles HBAC",
@@ -1046,7 +1034,7 @@
             "type": "prometheus",
             "uid": "${source}"
           },
-          "expr": "freeipa_regles_sudo",
+          "expr": "max by (job) (freeipa_regles_sudo{instance=~\"$serveur\"})",
           "refId": "G",
           "format": "time_series",
           "legendFormat": "règles sudo",
@@ -1057,7 +1045,7 @@
             "type": "prometheus",
             "uid": "${source}"
           },
-          "expr": "freeipa_zones_dns",
+          "expr": "max by (job) (freeipa_zones_dns{instance=~\"$serveur\"})",
           "refId": "H",
           "format": "time_series",
           "legendFormat": "zones DNS",
@@ -1100,7 +1088,7 @@
             "type": "prometheus",
             "uid": "${source}"
           },
-          "expr": "(freeipa_certificat_expiration_timestamp - time()) / 86400",
+          "expr": "(freeipa_certificat_expiration_timestamp{instance=~\"$serveur\"} - time()) / 86400",
           "refId": "A",
           "format": "table",
           "instant": true
@@ -1114,15 +1102,21 @@
               "Time": true,
               "__name__": true,
               "endpoint": true,
-              "instance": true,
               "job": true,
               "namespace": true,
               "service": true,
-              "host": true
+              "host": true,
+              "cle": true,
+              "cle 1": true,
+              "cle 2": true,
+              "cle 3": true,
+              "cle 4": true,
+              "cle 5": true
             },
             "renameByName": {
               "certificat": "Certificat",
-              "Value": "Jours restants"
+              "Value": "Jours restants",
+              "instance": "Serveur"
             }
           }
         }
@@ -1177,9 +1171,9 @@
         "uid": "${source}"
       },
       "gridPos": {
-        "x": 8,
+        "x": 0,
         "y": 44,
-        "w": 16,
+        "w": 24,
         "h": 4
       },
       "targets": [
@@ -1188,20 +1182,20 @@
             "type": "prometheus",
             "uid": "${source}"
           },
-          "expr": "rate(freeipa_ldap_operations_initiees_total[5m])",
+          "expr": "rate(freeipa_ldap_operations_initiees_total{instance=~\"$serveur\"}[5m])",
           "refId": "A",
           "format": "time_series",
-          "legendFormat": "opérations/s"
+          "legendFormat": "{{instance}} — opérations/s"
         },
         {
           "datasource": {
             "type": "prometheus",
             "uid": "${source}"
           },
-          "expr": "rate(freeipa_ldap_octets_envoyes_total[5m])",
+          "expr": "rate(freeipa_ldap_octets_envoyes_total{instance=~\"$serveur\"}[5m])",
           "refId": "B",
           "format": "time_series",
-          "legendFormat": "octets/s"
+          "legendFormat": "{{instance}} — octets/s"
         }
       ],
       "options": {
@@ -1249,10 +1243,10 @@
             "type": "prometheus",
             "uid": "${source}"
           },
-          "expr": "100 * freeipa_ldap_cache_occupation_octets / freeipa_ldap_cache_plafond_octets",
+          "expr": "100 * freeipa_ldap_cache_occupation_octets{instance=~\"$serveur\"} / freeipa_ldap_cache_plafond_octets{instance=~\"$serveur\"}",
           "refId": "A",
           "format": "time_series",
-          "legendFormat": "{{base}} / {{cache}}",
+          "legendFormat": "{{instance}} / {{base}} / {{cache}}",
           "instant": true
         }
       ],
@@ -1314,7 +1308,7 @@
             "type": "prometheus",
             "uid": "${source}"
           },
-          "expr": "freeipa_ldap_cache_occupation_octets",
+          "expr": "label_join(freeipa_ldap_cache_occupation_octets{instance=~\"$serveur\"}, \"cle\", \" · \", \"instance\", \"base\", \"cache\")",
           "refId": "A",
           "format": "table",
           "instant": true
@@ -1324,7 +1318,7 @@
             "type": "prometheus",
             "uid": "${source}"
           },
-          "expr": "freeipa_ldap_cache_plafond_octets",
+          "expr": "sum by (cle) (label_join(freeipa_ldap_cache_plafond_octets{instance=~\"$serveur\"}, \"cle\", \" · \", \"instance\", \"base\", \"cache\"))",
           "refId": "B",
           "format": "table",
           "instant": true
@@ -1334,7 +1328,7 @@
             "type": "prometheus",
             "uid": "${source}"
           },
-          "expr": "freeipa_ldap_cache_entrees",
+          "expr": "sum by (cle) (label_join(freeipa_ldap_cache_entrees{instance=~\"$serveur\"}, \"cle\", \" · \", \"instance\", \"base\", \"cache\"))",
           "refId": "C",
           "format": "table",
           "instant": true
@@ -1344,7 +1338,7 @@
             "type": "prometheus",
             "uid": "${source}"
           },
-          "expr": "freeipa_ldap_cache_taux",
+          "expr": "sum by (cle) (label_join(freeipa_ldap_cache_taux{instance=~\"$serveur\"}, \"cle\", \" · \", \"instance\", \"base\", \"cache\"))",
           "refId": "D",
           "format": "table",
           "instant": true
@@ -1354,7 +1348,7 @@
         {
           "id": "joinByField",
           "options": {
-            "byField": "base",
+            "byField": "cle",
             "mode": "outer"
           }
         },
@@ -1363,57 +1357,31 @@
           "options": {
             "excludeByName": {
               "Time": true,
-              "Time 1": true,
-              "Time 2": true,
-              "Time 3": true,
-              "Time 4": true,
+              "cle": true,
               "__name__": true,
-              "__name__ 1": true,
-              "__name__ 2": true,
-              "__name__ 3": true,
-              "__name__ 4": true,
-              "endpoint": true,
-              "instance": true,
               "job": true,
+              "endpoint": true,
               "namespace": true,
               "service": true,
               "host": true,
-              "endpoint 1": true,
-              "endpoint 2": true,
-              "endpoint 3": true,
-              "endpoint 4": true,
-              "instance 1": true,
-              "instance 2": true,
-              "instance 3": true,
-              "instance 4": true,
-              "job 1": true,
-              "job 2": true,
-              "job 3": true,
-              "job 4": true,
-              "namespace 1": true,
-              "namespace 2": true,
-              "namespace 3": true,
-              "namespace 4": true,
-              "service 1": true,
-              "service 2": true,
-              "service 3": true,
-              "service 4": true,
-              "host 1": true,
-              "host 2": true,
-              "host 3": true,
-              "host 4": true,
-              "cache 2": true,
-              "cache 3": true,
-              "cache 4": true
+              "pod": true,
+              "container": true,
+              "prometheus": true,
+              "prometheus_replica": true
             },
             "renameByName": {
-              "base": "Base",
-              "cache": "Cache",
-              "cache 1": "Cache",
               "Value #A": "Occupé",
               "Value #B": "Plafond",
               "Value #C": "Entrées",
-              "Value #D": "Taux"
+              "Value #D": "Taux",
+              "instance": "Serveur",
+              "base": "Base",
+              "cache": "Cache"
+            },
+            "indexByName": {
+              "instance": 0,
+              "base": 1,
+              "cache": 2
             }
           }
         }
@@ -1493,10 +1461,10 @@
             "type": "prometheus",
             "uid": "${source}"
           },
-          "expr": "freeipa_ldap_cache_taux",
+          "expr": "freeipa_ldap_cache_taux{instance=~\"$serveur\"}",
           "refId": "A",
           "format": "time_series",
-          "legendFormat": "{{base}} / {{cache}}"
+          "legendFormat": "{{instance}} / {{base}} / {{cache}}"
         }
       ],
       "options": {
@@ -1523,6 +1491,511 @@
         },
         "overrides": []
       }
+    },
+    {
+      "type": "stat",
+      "title": "Réplication — accords sortants",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${source}"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 65,
+        "w": 5,
+        "h": 4
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${source}"
+          },
+          "expr": "freeipa_replication_accords{instance=~\"$serveur\"}",
+          "refId": "A",
+          "format": "time_series",
+          "instant": false,
+          "legendFormat": "{{instance}}"
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "background",
+        "graphMode": "none",
+        "textMode": "value_and_name"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Accords en échec",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${source}"
+      },
+      "gridPos": {
+        "x": 5,
+        "y": 65,
+        "w": 5,
+        "h": 4
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${source}"
+          },
+          "expr": "count(freeipa_replication_accord_etat{instance=~\"$serveur\"} == 0) or vector(0)",
+          "refId": "A",
+          "format": "time_series",
+          "instant": false
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "background",
+        "graphMode": "none",
+        "textMode": "auto"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Entrées en conflit",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${source}"
+      },
+      "gridPos": {
+        "x": 10,
+        "y": 65,
+        "w": 4,
+        "h": 4
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${source}"
+          },
+          "expr": "sum(freeipa_replication_conflits{instance=~\"$serveur\"}) or vector(0)",
+          "refId": "A",
+          "format": "time_series",
+          "instant": false
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "background",
+        "graphMode": "none",
+        "textMode": "auto"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 1
+              }
+            ]
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Écart d'utilisateurs entre serveurs",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${source}"
+      },
+      "gridPos": {
+        "x": 14,
+        "y": 65,
+        "w": 5,
+        "h": 4
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${source}"
+          },
+          "expr": "max by (job) (freeipa_utilisateurs{instance=~\"$serveur\",etat=\"actif\"}) - min by (job) (freeipa_utilisateurs{instance=~\"$serveur\",etat=\"actif\"})",
+          "refId": "A",
+          "format": "time_series",
+          "instant": false
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "background",
+        "graphMode": "none",
+        "textMode": "auto"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 1
+              }
+            ]
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Retard de convergence le plus fort",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${source}"
+      },
+      "gridPos": {
+        "x": 19,
+        "y": 65,
+        "w": 5,
+        "h": 4
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${source}"
+          },
+          "expr": "max(max by (suffixe, replica) (freeipa_replication_ruv_timestamp{instance=~\"$serveur\"})\n- on(suffixe, replica) group_right()\nfreeipa_replication_ruv_timestamp{instance=~\"$serveur\"}) or vector(0)",
+          "refId": "A",
+          "format": "time_series",
+          "instant": false
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "background",
+        "graphMode": "none",
+        "textMode": "auto"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 300
+              },
+              {
+                "color": "red",
+                "value": 900
+              }
+            ]
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "type": "table",
+      "title": "Réplication — état des accords",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${source}"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 69,
+        "w": 14,
+        "h": 9
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${source}"
+          },
+          "expr": "label_join(freeipa_replication_accord_etat{instance=~\"$serveur\"}, \"cle\", \" · \", \"instance\", \"accord\")",
+          "refId": "A",
+          "format": "table",
+          "instant": true
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${source}"
+          },
+          "expr": "sum by (cle) (label_join(time() - freeipa_replication_accord_derniere_maj_timestamp{instance=~\"$serveur\"}, \"cle\", \" · \", \"instance\", \"accord\"))",
+          "refId": "B",
+          "format": "table",
+          "instant": true
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${source}"
+          },
+          "expr": "sum by (cle) (label_join(freeipa_replication_accord_changements_envoyes_total{instance=~\"$serveur\"}, \"cle\", \" · \", \"instance\", \"accord\"))",
+          "refId": "C",
+          "format": "table",
+          "instant": true
+        }
+      ],
+      "transformations": [
+        {
+          "id": "joinByField",
+          "options": {
+            "byField": "cle",
+            "mode": "outer"
+          }
+        },
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true,
+              "cle": true,
+              "__name__": true,
+              "job": true,
+              "endpoint": true,
+              "namespace": true,
+              "service": true,
+              "host": true,
+              "pod": true,
+              "container": true,
+              "prometheus": true,
+              "prometheus_replica": true,
+              "suffixe": true
+            },
+            "renameByName": {
+              "Value #A": "État",
+              "Value #B": "Âge de la dernière maj (s)",
+              "Value #C": "Changements envoyés",
+              "instance": "Serveur",
+              "accord": "Accord",
+              "pair": "Pair"
+            },
+            "indexByName": {
+              "instance": 0,
+              "accord": 1
+            }
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "État"
+            },
+            "properties": [
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "type": "value",
+                    "options": {
+                      "0": {
+                        "text": "en échec",
+                        "color": "red",
+                        "index": 0
+                      },
+                      "1": {
+                        "text": "indéterminé",
+                        "color": "orange",
+                        "index": 1
+                      },
+                      "2": {
+                        "text": "sain",
+                        "color": "green",
+                        "index": 2
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-background"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Âge de la dernière maj (s)"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "s"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Retard de convergence par serveur",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${source}"
+      },
+      "gridPos": {
+        "x": 14,
+        "y": 69,
+        "w": 10,
+        "h": 9
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${source}"
+          },
+          "expr": "max by (suffixe, replica) (freeipa_replication_ruv_timestamp{instance=~\"$serveur\"})\n- on(suffixe, replica) group_right()\nfreeipa_replication_ruv_timestamp{instance=~\"$serveur\"}",
+          "refId": "A",
+          "format": "time_series",
+          "instant": false,
+          "legendFormat": "{{instance}} ← réplica {{replica}}"
+        }
+      ],
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "mappings": [],
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      }
     }
   ],
   "templating": {
@@ -1540,6 +2013,31 @@
         "regex": "",
         "skipUrlSync": false,
         "type": "datasource"
+      },
+      {
+        "name": "serveur",
+        "label": "Serveur",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "${source}"
+        },
+        "definition": "label_values(freeipa_collecte_reussie, instance)",
+        "query": "label_values(freeipa_collecte_reussie, instance)",
+        "multi": true,
+        "includeAll": true,
+        "allValue": ".*",
+        "current": {
+          "selected": true,
+          "text": [
+            "All"
+          ],
+          "value": [
+            "$__all"
+          ]
+        },
+        "refresh": 2,
+        "sort": 1
       }
     ]
   }

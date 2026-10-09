@@ -1,4 +1,6 @@
 #!/bin/sh
+# Copyright (C) 2026 gtranche
+# SPDX-License-Identifier: GPL-3.0-or-later
 # Rend le manifeste et l applique : Service, Endpoints, ServiceMonitor et les
 # neuf alertes. Idempotent.
 set -eu

@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# Copyright (C) 2026 gtranche
+# SPDX-License-Identifier: GPL-3.0-or-later
 # Confronte ce depot a ce qui tourne reellement sur la machine FreeIPA.
 # Ne modifie rien : il lit, compare, et sort en 1 s il y a le moindre ecart.
 #

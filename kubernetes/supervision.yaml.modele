@@ -1,3 +1,5 @@
+# Copyright (C) 2026 gtranche
+# SPDX-License-Identifier: GPL-3.0-or-later
 # FreeIPA porte l identite de tout le parc : sans supervision, sa panne se
 # decouvre par des connexions qui echouent ailleurs.
 #
@@ -49,7 +51,7 @@ spec:
       for: 10m
       labels: {severity: warning}
       annotations:
-        summary: La collecte de l etat de FreeIPA echoue
+        summary: 'La collecte de l etat de FreeIPA echoue sur {{ $labels.instance }}'
         description: 'Les compteurs affiches sont figes, pas nuls.'
     - alert: FreeipaCollecteObsolete
       expr: time() - freeipa_collecte_timestamp > 600
@@ -65,14 +67,14 @@ spec:
       for: 5m
       labels: {severity: critical}
       annotations:
-        summary: 'Le service {{ $labels.composant }} de FreeIPA est arrete'
+        summary: 'Le service {{ $labels.composant }} de FreeIPA est arrete sur {{ $labels.instance }}'
         description: 'Selon le service, l authentification, le DNS ou la delivrance de certificats est interrompue.'
     - alert: FreeipaAnnuaireInjoignable
       expr: up{job="@NOM_JOB@"} == 0
       for: 10m
       labels: {severity: critical}
       annotations:
-        summary: FreeIPA ne repond plus a la supervision
+        summary: '{{ $labels.instance }} ne repond plus a la supervision'
         description: 'A distinguer d une panne du service : verifier node_exporter avant de conclure.'
   - name: freeipa-sante
     rules:
@@ -83,7 +85,7 @@ spec:
       for: 10m
       labels: {severity: warning}
       annotations:
-        summary: 'L annuaire repond en {{ $value | humanizeDuration }}'
+        summary: 'L annuaire de {{ $labels.instance }} repond en {{ $value | humanizeDuration }}'
         description: 'Une recherche de portee base tient normalement sous la milliseconde.'
     - alert: FreeipaCacheSature
       # Un taux bas ne signale rien tant que le cache n est pas plein : il veut
@@ -91,19 +93,19 @@ spec:
       # conjonction — cache rempli ET lectures qui le manquent.
       expr: |
         freeipa_ldap_cache_taux{cache="entrees"} < 80
-        and on(base, cache)
+        and on(instance, base, cache)
         (100 * freeipa_ldap_cache_occupation_octets / freeipa_ldap_cache_plafond_octets) > 80
       for: 1h
       labels: {severity: warning}
       annotations:
-        summary: 'Cache {{ $labels.base }} plein et inefficace ({{ $value }} % de succes)'
+        summary: 'Cache {{ $labels.base }} de {{ $labels.instance }} plein et inefficace ({{ $value }} % de succes)'
         description: 'La base est trop grande pour le cache alloue : augmenter maxentrycachesize.'
     - alert: FreeipaEchecsKerberos
-      expr: sum(rate(freeipa_kerberos_echecs_total[15m])) * 900 > 20
+      expr: sum by (instance) (rate(freeipa_kerberos_echecs_total[15m])) * 900 > 20
       for: 15m
       labels: {severity: warning}
       annotations:
-        summary: '{{ $value | printf "%.0f" }} refus Kerberos sur 15 minutes'
+        summary: '{{ $value | printf "%.0f" }} refus Kerberos sur 15 minutes sur {{ $labels.instance }}'
         description: 'Machine desynchronisee, keytab perime, ou tentative d intrusion — les trois se ressemblent.'
     - alert: FreeipaCertificatProche
       expr: (freeipa_certificat_expiration_timestamp - time()) / 86400 < 30
@@ -117,5 +119,60 @@ spec:
       for: 15m
       labels: {severity: warning}
       annotations:
-        summary: Des connexions LDAP atteignent le plafond de fils
+        summary: 'Des connexions LDAP atteignent le plafond de fils sur {{ $labels.instance }}'
         description: 'L annuaire serialise les requetes de ces clients.'
+  - name: freeipa-replication
+    rules:
+    # Un serveur seul n a pas d accord : ces regles restent muettes chez lui.
+    - alert: FreeipaReplicationEnEchec
+      expr: freeipa_replication_accord_etat == 0
+      for: 10m
+      labels: {severity: critical}
+      annotations:
+        summary: 'La replication de {{ $labels.instance }} vers {{ $labels.pair }} est en echec'
+        description: 'Les deux serveurs peuvent repondre et pourtant diverger : up ne voit pas cette panne.'
+    - alert: FreeipaReplicationIndeterminee
+      # 1 veut dire « nous ne savons pas » : degrade, ou statut illisible.
+      expr: freeipa_replication_accord_etat == 1
+      for: 30m
+      labels: {severity: warning}
+      annotations:
+        summary: 'Etat de replication indetermine de {{ $labels.instance }} vers {{ $labels.pair }}'
+        description: 'Statut absent ou degrade : a verifier avec dsconf repl-agmt status.'
+    - alert: FreeipaReplicationEnRetard
+      # Chaque serveur ne publie que ce qu il a recu : le retard reel est la
+      # difference entre serveurs, et ne se voit sur aucun serveur isole.
+      expr: |
+        max by (suffixe, replica) (freeipa_replication_ruv_timestamp)
+        - on(suffixe, replica) group_right()
+        freeipa_replication_ruv_timestamp > 900
+      for: 15m
+      labels: {severity: warning}
+      annotations:
+        summary: '{{ $labels.instance }} a {{ $value | humanizeDuration }} de retard sur le replica {{ $labels.replica }}'
+        description: 'Le serveur repond mais ne recoit plus les changements de ce fournisseur.'
+    - alert: FreeipaReplicationConflits
+      expr: freeipa_replication_conflits > 0
+      for: 1h
+      labels: {severity: warning}
+      annotations:
+        summary: '{{ $value | printf "%.0f" }} entrees en conflit de replication sur {{ $labels.instance }}'
+        description: 'Deux ecritures concurrentes sur des serveurs differents : a resoudre a la main.'
+    - alert: FreeipaReplicaSansAccord
+      expr: freeipa_replication_suffixes > 0 and freeipa_replication_accords == 0
+      for: 1h
+      labels: {severity: critical}
+      annotations:
+        summary: '{{ $labels.instance }} replique un suffixe sans aucun accord sortant'
+        description: 'Ses ecritures locales ne partent nulle part : topologie a moitie demontee.'
+    - alert: FreeipaDomaineDivergent
+      # La meme grandeur lue sur chaque serveur : si elle differe durablement,
+      # la replication ne converge pas, quoi que disent les accords.
+      expr: |
+        max by (job) (freeipa_utilisateurs{etat="actif"})
+        - min by (job) (freeipa_utilisateurs{etat="actif"}) > 0
+      for: 1h
+      labels: {severity: warning}
+      annotations:
+        summary: 'Les serveurs du domaine ne comptent pas le meme nombre d utilisateurs (ecart de {{ $value | printf "%.0f" }})'
+        description: 'Divergence durable : un replica n a pas converge, meme si chaque accord se declare sain.'

@@ -1,5 +1,7 @@
 #!/bin/sh
-# Joue les suites. Les cinq premieres ne demandent rien ; la derniere veut un
+# Copyright (C) 2026 gtranche
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Joue les suites. Les six premieres ne demandent rien ; la derniere veut un
 # moteur de conteneurs, et un cluster si IMAGE_PROMETHEUS est vide.
 #
 # SANS_ALERTES=1 saute la derniere, pour qui veut seulement lire le code.
@@ -24,6 +26,10 @@ echo "===== citation des arguments distants"
 echo
 echo "===== rendu des modeles"
 "$ici/tests/test-rendu.sh"
+
+echo
+echo "===== pose et retrait"
+"$ici/tests/test-installer.sh"
 
 echo
 echo "===== alertes"

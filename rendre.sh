@@ -1,4 +1,6 @@
 #!/bin/sh
+# Copyright (C) 2026 gtranche
+# SPDX-License-Identifier: GPL-3.0-or-later
 # Remplace les @MARQUEURS@ d un modele par les valeurs de configuration.env, et
 # ecrit le resultat sur la sortie standard.
 #

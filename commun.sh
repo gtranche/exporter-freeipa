@@ -1,3 +1,5 @@
+# Copyright (C) 2026 gtranche
+# SPDX-License-Identifier: GPL-3.0-or-later
 # Charge la configuration et joue kubectl la ou il faut. A sourcer, pas a jouer.
 
 charger_configuration() {
