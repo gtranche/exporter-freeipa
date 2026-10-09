@@ -1,0 +1,121 @@
+# FreeIPA porte l identite de tout le parc : sans supervision, sa panne se
+# decouvre par des connexions qui echouent ailleurs.
+#
+# Les series viennent du collecteur textfile du node_exporter de la machine,
+# alimente par exporter-freeipa.py.
+#
+# Modele : les noms encadres d arobases sont remplaces par rendre.sh a partir
+# de configuration.env. Ce fichier n est pas applicable tel quel.
+#   ./rendre.sh kubernetes/supervision.yaml.modele | kubectl apply -f -
+apiVersion: v1
+kind: Service
+metadata: {name: freeipa-node, namespace: "@NAMESPACE@", labels: {app: freeipa-node}}
+spec:
+  ports: [{name: metrics, port: @PORT_NODE_EXPORTER@, targetPort: @PORT_NODE_EXPORTER@, protocol: TCP}]
+---
+apiVersion: v1
+kind: Endpoints
+metadata: {name: freeipa-node, namespace: "@NAMESPACE@", labels: {app: freeipa-node}}
+subsets:
+- addresses: [{ip: "@ADRESSE_FREEIPA@"}]
+  ports: [{name: metrics, port: @PORT_NODE_EXPORTER@, protocol: TCP}]
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata: {name: freeipa-node, namespace: "@NAMESPACE@", labels: {app: freeipa-node}}
+spec:
+  selector: {matchLabels: {app: freeipa-node}}
+  endpoints:
+  - port: metrics
+    interval: @INTERVALLE_SCRAPE@
+    relabelings:
+    - {action: replace, targetLabel: host, replacement: "@ETIQUETTE_HOTE@"}
+    - {action: replace, targetLabel: job, replacement: "@NOM_JOB@"}
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: freeipa
+  namespace: "@NAMESPACE@"
+  labels: {prometheus: "@SELECTEUR_PROMETHEUS@", role: alert-rules}
+spec:
+  groups:
+  - name: freeipa-collecte
+    rules:
+    # Sans ces deux regles, une panne de collecte ferait taire toutes les
+    # autres : une absence de donnee ne franchit aucun seuil.
+    - alert: FreeipaCollecteEnEchec
+      expr: freeipa_collecte_reussie == 0
+      for: 10m
+      labels: {severity: warning}
+      annotations:
+        summary: La collecte de l etat de FreeIPA echoue
+        description: 'Les compteurs affiches sont figes, pas nuls.'
+    - alert: FreeipaCollecteObsolete
+      expr: time() - freeipa_collecte_timestamp > 600
+      for: 10m
+      labels: {severity: warning}
+      annotations:
+        summary: Aucune collecte FreeIPA depuis {{ $value | humanizeDuration }}
+        description: 'Le minuteur passe toutes les minutes.'
+  - name: freeipa-services
+    rules:
+    - alert: FreeipaServiceArrete
+      expr: freeipa_service_actif == 0
+      for: 5m
+      labels: {severity: critical}
+      annotations:
+        summary: 'Le service {{ $labels.composant }} de FreeIPA est arrete'
+        description: 'Selon le service, l authentification, le DNS ou la delivrance de certificats est interrompue.'
+    - alert: FreeipaAnnuaireInjoignable
+      expr: up{job="@NOM_JOB@"} == 0
+      for: 10m
+      labels: {severity: critical}
+      annotations:
+        summary: FreeIPA ne repond plus a la supervision
+        description: 'A distinguer d une panne du service : verifier node_exporter avant de conclure.'
+  - name: freeipa-sante
+    rules:
+    - alert: FreeipaLdapLent
+      # Mesure reelle : 0,2 ms pour une recherche, 0,8 ms pour une liaison.
+      # Un seuil a la seconde n aurait jamais rien signale.
+      expr: freeipa_temps_reponse_secondes{interface=~"ldap|ldap_liaison"} > 0.1
+      for: 10m
+      labels: {severity: warning}
+      annotations:
+        summary: 'L annuaire repond en {{ $value | humanizeDuration }}'
+        description: 'Une recherche de portee base tient normalement sous la milliseconde.'
+    - alert: FreeipaCacheSature
+      # Un taux bas ne signale rien tant que le cache n est pas plein : il veut
+      # seulement dire que la base est peu lue. Ce qui compte est la
+      # conjonction — cache rempli ET lectures qui le manquent.
+      expr: |
+        freeipa_ldap_cache_taux{cache="entrees"} < 80
+        and on(base, cache)
+        (100 * freeipa_ldap_cache_occupation_octets / freeipa_ldap_cache_plafond_octets) > 80
+      for: 1h
+      labels: {severity: warning}
+      annotations:
+        summary: 'Cache {{ $labels.base }} plein et inefficace ({{ $value }} % de succes)'
+        description: 'La base est trop grande pour le cache alloue : augmenter maxentrycachesize.'
+    - alert: FreeipaEchecsKerberos
+      expr: sum(rate(freeipa_kerberos_echecs_total[15m])) * 900 > 20
+      for: 15m
+      labels: {severity: warning}
+      annotations:
+        summary: '{{ $value | printf "%.0f" }} refus Kerberos sur 15 minutes'
+        description: 'Machine desynchronisee, keytab perime, ou tentative d intrusion — les trois se ressemblent.'
+    - alert: FreeipaCertificatProche
+      expr: (freeipa_certificat_expiration_timestamp - time()) / 86400 < 30
+      for: 1h
+      labels: {severity: warning}
+      annotations:
+        summary: 'Le certificat {{ $labels.certificat }} expire dans {{ $value | printf "%.0f" }} jours'
+        description: 'Le renouvellement est normalement automatique : une echeance proche signale qu il ne l a pas ete.'
+    - alert: FreeipaConnexionsSaturees
+      expr: freeipa_ldap_connexions_au_max_de_fils > 0
+      for: 15m
+      labels: {severity: warning}
+      annotations:
+        summary: Des connexions LDAP atteignent le plafond de fils
+        description: 'L annuaire serialise les requetes de ces clients.'

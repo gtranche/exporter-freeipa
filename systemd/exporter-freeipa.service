@@ -1,0 +1,13 @@
+[Unit]
+Description=Collecte l etat de FreeIPA pour node_exporter
+After=dirsrv.target
+
+[Service]
+Type=oneshot
+# Aucune valeur de domaine ici : l instance dirsrv se trouve dans /run et le
+# suffixe se lit dans le rootDSE. Pour les imposer, un fichier de surcharge :
+#   INSTANCE_DIRSRV=EXEMPLE-TEST
+#   BASE_LDAP=dc=exemple,dc=test
+EnvironmentFile=-/etc/sysconfig/exporter-freeipa
+ExecStart=/usr/local/bin/exporter-freeipa.py
+TimeoutStartSec=300

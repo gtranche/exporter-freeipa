@@ -1,0 +1,15 @@
+# La configuration du site : elle ne quitte pas la machine.
+configuration.env
+*.bak
+
+# Notes de travail : elles ne se committent pas.
+*.notes.md
+NOTES.md
+brouillon*
+# Sorties de mesure et fichiers temporaires
+*.prom
+*.log
+*.tmp
+# Artefacts Python compiles
+__pycache__/
+*.pyc

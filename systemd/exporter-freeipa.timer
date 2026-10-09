@@ -1,0 +1,12 @@
+[Unit]
+Description=Collecte periodique de l etat de FreeIPA
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=1min
+AccuracySec=10s
+# Pas de Persistent=true : au demarrage, le rattrapage des collectes manquees
+# entrerait en concurrence avec dirsrv au moment ou il a besoin de la machine.
+
+[Install]
+WantedBy=timers.target

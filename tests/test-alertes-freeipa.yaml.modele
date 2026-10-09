@@ -1,0 +1,200 @@
+# Ce que ces tests protegent : les expressions ou une erreur ne se verrait pas
+# a la lecture — le filtre ancre de FreeipaLdapLent, qui doit laisser passer la
+# mesure d etablissement de connexion, et la conjonction de FreeipaCacheSature,
+# sans laquelle un cache peu lu serait signale comme sature.
+#
+# Les annotations sont retirees des regles par tester-alertes.sh : ces tests
+# protegent le declenchement, pas la redaction des messages.
+#
+# promtool fait partir le temps a l epoch : `time()` vaut donc eval_time en
+# secondes, et les horodatages des series se comptent a partir de zero.
+evaluation_interval: 1m
+rule_files:
+- regles-extraites.yaml
+
+tests:
+
+- interval: 1m
+  name: la mesure d etablissement de connexion ne compte pas comme un annuaire lent
+  input_series:
+  # Mesure du 2026-10-01 : la premiere recherche d une connexion neuve coute
+  # parfois 250 ms sans que l annuaire soit lent. Elle est publiee a part et le
+  # filtre de l alerte, ancre, ne doit pas la reprendre.
+  - series: 'freeipa_temps_reponse_secondes{interface="ldap_premiere"}'
+    values: '0.25+0x30'
+  - series: 'freeipa_temps_reponse_secondes{interface="ldap"}'
+    values: '0.0002+0x30'
+  - series: 'freeipa_temps_reponse_secondes{interface="ldap_liaison"}'
+    values: '0.0008+0x30'
+  alert_rule_test:
+  - eval_time: 20m
+    alertname: FreeipaLdapLent
+    exp_alerts: []
+
+- interval: 1m
+  name: un annuaire vraiment lent est signale sur l interface qui le ralentit
+  input_series:
+  - series: 'freeipa_temps_reponse_secondes{interface="ldap"}'
+    values: '0.4+0x30'
+  - series: 'freeipa_temps_reponse_secondes{interface="ldap_premiere"}'
+    values: '0.25+0x30'
+  alert_rule_test:
+  - eval_time: 20m
+    alertname: FreeipaLdapLent
+    exp_alerts:
+    - exp_labels: {severity: warning, interface: ldap}
+
+- interval: 1m
+  name: un cache peu lu mais loin de son plafond n est pas un cache sature
+  input_series:
+  - series: 'freeipa_ldap_cache_taux{base="userRoot",cache="entrees"}'
+    values: '20+0x80'
+  - series: 'freeipa_ldap_cache_occupation_octets{base="userRoot",cache="entrees"}'
+    values: '100+0x80'
+  - series: 'freeipa_ldap_cache_plafond_octets{base="userRoot",cache="entrees"}'
+    values: '1000+0x80'
+  # Une seconde base, elle pleine mais efficace. Sans elle, un appariement sur
+  # (base, cache) et un appariement vide rendraient le meme resultat et la
+  # difference ne serait pas testee.
+  - series: 'freeipa_ldap_cache_taux{base="ipaca",cache="entrees"}'
+    values: '99+0x80'
+  - series: 'freeipa_ldap_cache_occupation_octets{base="ipaca",cache="entrees"}'
+    values: '990+0x80'
+  - series: 'freeipa_ldap_cache_plafond_octets{base="ipaca",cache="entrees"}'
+    values: '1000+0x80'
+  alert_rule_test:
+  - eval_time: 70m
+    alertname: FreeipaCacheSature
+    exp_alerts: []
+
+- interval: 1m
+  name: un cache plein que les lectures manquent est signale
+  input_series:
+  - series: 'freeipa_ldap_cache_taux{base="userRoot",cache="entrees"}'
+    values: '20+0x80'
+  - series: 'freeipa_ldap_cache_occupation_octets{base="userRoot",cache="entrees"}'
+    values: '950+0x80'
+  - series: 'freeipa_ldap_cache_plafond_octets{base="userRoot",cache="entrees"}'
+    values: '1000+0x80'
+  # Une autre base, pleine mais efficace : elle ne doit pas entrer dans
+  # l appariement sur (base, cache).
+  - series: 'freeipa_ldap_cache_taux{base="ipaca",cache="entrees"}'
+    values: '99+0x80'
+  - series: 'freeipa_ldap_cache_occupation_octets{base="ipaca",cache="entrees"}'
+    values: '990+0x80'
+  - series: 'freeipa_ldap_cache_plafond_octets{base="ipaca",cache="entrees"}'
+    values: '1000+0x80'
+  alert_rule_test:
+  - eval_time: 70m
+    alertname: FreeipaCacheSature
+    exp_alerts:
+    - exp_labels: {severity: warning, base: userRoot, cache: entrees}
+
+- interval: 1m
+  name: un service arrete nomme le composant en cause et pas les autres
+  input_series:
+  - series: 'freeipa_service_actif{composant="named"}'
+    values: '1 0+0x30'
+  - series: 'freeipa_service_actif{composant="krb5kdc"}'
+    values: '1+0x30'
+  - series: 'freeipa_service_actif{composant="directory"}'
+    values: '1+0x30'
+  alert_rule_test:
+  - eval_time: 10m
+    alertname: FreeipaServiceArrete
+    exp_alerts:
+    - exp_labels: {severity: critical, composant: named}
+
+- interval: 1m
+  name: une collecte qui se fige est signalee alors que ses series existent encore
+  input_series:
+  # L horodatage suit le temps pendant dix minutes, puis ne bouge plus : les
+  # autres series restent lisibles et aucun seuil n est franchi.
+  - series: 'freeipa_collecte_timestamp'
+    values: '0+60x10 600+0x40'
+  - series: 'freeipa_collecte_reussie'
+    values: '1+0x50'
+  alert_rule_test:
+  - eval_time: 8m
+    alertname: FreeipaCollecteObsolete
+    exp_alerts: []
+  - eval_time: 40m
+    alertname: FreeipaCollecteObsolete
+    exp_alerts:
+    - exp_labels: {severity: warning}
+  - eval_time: 40m
+    alertname: FreeipaCollecteEnEchec
+    exp_alerts: []
+
+- interval: 1m
+  name: les refus kerberos ne comptent qu au-dela de vingt par quart d heure
+  input_series:
+  - series: 'freeipa_kerberos_echecs_total'
+    values: '0+1x60'
+  alert_rule_test:
+  - eval_time: 45m
+    alertname: FreeipaEchecsKerberos
+    exp_alerts: []
+
+- interval: 1m
+  name: une rafale de refus kerberos part en avertissement
+  input_series:
+  - series: 'freeipa_kerberos_echecs_total'
+    values: '0+5x60'
+  alert_rule_test:
+  - eval_time: 45m
+    alertname: FreeipaEchecsKerberos
+    exp_alerts:
+    - exp_labels: {severity: warning}
+
+- interval: 1m
+  name: un certificat est signale un mois avant son echeance et pas avant
+  input_series:
+  # 10 jours et 60 jours apres l epoch, d ou part le temps dans ces tests.
+  - series: 'freeipa_certificat_expiration_timestamp{certificat="httpd"}'
+    values: '864000+0x80'
+  - series: 'freeipa_certificat_expiration_timestamp{certificat="autorite"}'
+    values: '5184000+0x80'
+  alert_rule_test:
+  - eval_time: 70m
+    alertname: FreeipaCertificatProche
+    exp_alerts:
+    - exp_labels: {severity: warning, certificat: httpd}
+
+- interval: 1m
+  name: une cible qui ne repond plus est distinguee d un service arrete
+  input_series:
+  # Le nom de job vient de configuration.env : une alerte qui viserait un autre
+  # job que celui pose par le ServiceMonitor ne se declencherait jamais.
+  - series: 'up{job="@NOM_JOB@", instance="192.0.2.10:9100"}'
+    values: '1 1 1 0+0x40'
+  - series: 'up{job="autre-job", instance="192.0.2.11:9100"}'
+    values: '0+0x40'
+  alert_rule_test:
+  # Avant les 10 minutes de `for`, la panne est constatee mais pas encore dite.
+  - eval_time: 5m
+    alertname: FreeipaAnnuaireInjoignable
+    exp_alerts: []
+  - eval_time: 20m
+    alertname: FreeipaAnnuaireInjoignable
+    exp_alerts:
+    - exp_labels:
+        severity: critical
+        job: '@NOM_JOB@'
+        instance: 192.0.2.10:9100
+
+- interval: 1m
+  name: des connexions au plafond de fils sont signalees des la premiere
+  input_series:
+  # La mesure compte les connexions concernees : une seule suffit a signaler,
+  # un seuil plus haut masquerait un client qui serialise deja ses requetes.
+  - series: 'freeipa_ldap_connexions_au_max_de_fils'
+    values: '0 0 0 1+0x40'
+  alert_rule_test:
+  - eval_time: 10m
+    alertname: FreeipaConnexionsSaturees
+    exp_alerts: []
+  - eval_time: 25m
+    alertname: FreeipaConnexionsSaturees
+    exp_alerts:
+    - exp_labels: {severity: warning}
