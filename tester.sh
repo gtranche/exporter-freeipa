@@ -20,7 +20,7 @@ echo "===== depot publiable"
 python3 "$ici/tests/test-depot-public.py"
 
 echo
-echo "===== citation des arguments distants"
+echo "===== citation et valeurs exigees"
 "$ici/tests/test-commun.sh"
 
 echo

@@ -4,7 +4,8 @@ Expose l'état de FreeIPA à Prometheus, et le présente dans un tableau Grafana
 
 Rien n'écoute sur le réseau : le script écrit un fichier que le collecteur
 textfile du `node_exporter` déjà présent sur la machine sert avec ses propres
-métriques. Tout passe par le socket local de l'annuaire, qui authentifie root
+métriques. Il n'y a donc **qu'un port à ouvrir**, celui du `node_exporter` déjà
+en place, et qu'une cible à déclarer dans Prometheus. Tout passe par le socket local de l'annuaire, qui authentifie root
 sans mot de passe — aucun secret n'est stocké ni manipulé.
 
 Aucune valeur propre à un site n'est inscrite dans le dépôt. Les deux
@@ -87,12 +88,17 @@ Puis ajuster. Le fichier est ignoré par git : ses valeurs ne quittent pas la
 machine. Les valeurs fournies en exemple appartiennent aux plages réservées à la
 documentation (RFC 5737, RFC 2606) et ne joignent rien.
 
-Il porte l'adresse de la machine FreeIPA, le namespace, le nom de job et
-l'étiquette d'hôte, le Deployment de Grafana, les chemins système — qui varient
-d'une distribution à l'autre — et, si `kubectl` n'est pas sur ce poste, l'hôte
-par lequel y accéder. Chaque script le lit et refuse de tourner si une valeur
-manque : un manifeste à moitié rendu s'appliquerait sans erreur et superviserait
-la mauvaise machine.
+Ses blocs sont rangés par **qui en a besoin**, parce que ce n'est pas forcément
+la même personne : la cible ssh et les chemins système de l'hôte FreeIPA — qui
+varient d'une distribution à l'autre — puis les valeurs du fichier à remettre à
+qui gère Prometheus, puis celles qui ne servent qu'à appliquer le manifeste
+soi-même, puis celles qui ne servent qu'aux tests. Grafana n'y figure pas du
+tout : le tableau s'importe à la main.
+
+Chaque script n'exige que les valeurs **qu'il emploie** et se fait nommer celle
+qui manque. Si vous ne gérez que des hôtes FreeIPA, les deux premiers blocs
+suffisent : `installer.sh` et `verifier-deploiement.sh` ne demandent rien du
+cluster.
 
 Ce qui n'y figure pas, et n'a pas à y figurer : l'instance dirsrv, cherchée dans
 `/run`, et le suffixe du domaine, lu dans le `rootDSE`. Pour les imposer malgré
@@ -140,28 +146,64 @@ Le minuteur n'est **pas** `Persistent=true` : au démarrage, le rattrapage des
 collectes manquées entrerait en concurrence avec `dirsrv` au moment où il a
 besoin de la machine.
 
-## Poser la supervision et le tableau
+## La supervision : un fichier à remettre
 
-    ./poser-supervision.sh
-    ./grafana/installer-tableau.sh
+Prometheus et Grafana ne sont pas forcément à vous. Ce dépôt produit donc un
+**fichier**, et l'applique seulement si vous le lui demandez :
 
-`poser-supervision.sh` rend le modèle et l'applique : `Service`, `Endpoints`,
-`ServiceMonitor` et quinze alertes, dont six sur la réplication. Pour n'obtenir
-que le manifeste — à verser dans un dépôt GitOps, par exemple :
+    ./rendre.sh kubernetes/supervision.yaml.modele > supervision-freeipa.yaml
 
-    ./rendre.sh kubernetes/supervision.yaml.modele
+Le résultat est complet et autonome : `Service`, `Endpoints`, `ServiceMonitor` et
+quinze alertes, dont six sur la réplication. C'est ce fichier que vous remettez à
+qui exploite Prometheus — ou que vous versez dans un dépôt GitOps. Les valeurs
+qu'il demande sont groupées dans `configuration.env` sous « le fichier à remettre
+à qui gère Prometheus » ; les autres blocs ne sont pas lus pour le produire.
+
+Un marqueur sans valeur fait **échouer** le rendu : un manifeste à moitié
+substitué s'appliquerait sans erreur et superviserait la mauvaise machine.
+
+Si vous avez vous-même un accès `kubectl` au cluster, la voie courte existe :
+
+    ./poser-supervision.sh      # rend le modèle et l'applique, idempotent
 
 Les `Endpoints` sont écrits à la main et non en `EndpointSlice` :
 prometheus-operator lit les `Endpoints`, un slice seul lui serait invisible. Pour
 plusieurs serveurs IdM, ajouter une adresse par serveur dans le même `Endpoints`
 suffit : les alertes et le tableau les distinguent par `instance`.
 
-L'installeur de tableau pose un ConfigMap, puis un volume et un montage dans le
-Deployment de Grafana : il n'y a pas de découverte automatique ici, chaque
-tableau est un montage explicite. Il ne redémarre Grafana que si le montage
-manquait, et il vérifie son effet dans le conteneur plutôt que le code retour du
-patch. 28 panneaux, deux variables : la source de données, que Grafana demande à
-l'ouverture, et le serveur — tous par défaut.
+## Poser le tableau Grafana
+
+Rien à installer, rien à configurer : `grafana/tableau-freeipa.json` s'importe
+tel quel dans l'interface.
+
+1. **Dashboards** → **New** → **Import** ;
+2. coller le contenu de `grafana/tableau-freeipa.json`, ou téléverser le
+   fichier, puis **Load** ;
+3. le formulaire ne demande que trois choses — **Name**, **Folder**, **UID** —
+   et aucune source de données ; **Import**.
+
+Le tableau s'ouvre alors sur sa propre liste **Source de données**, en haut à
+gauche, déjà positionnée sur le Prometheus par défaut de votre Grafana. C'est
+là que la source se choisit, pas à l'import. *(Mesuré sur Grafana 12.4.0, avec
+une source de données nommée `metriques-du-collegue` pour vérifier qu'aucun nom
+n'est attendu : le formulaire n'a rien demandé, et le tableau s'est ouvert sur
+elle.)*
+
+Les 28 panneaux et les deux variables visent tous `${source}`, une variable de
+type `datasource` : aucun nom de source n'est figé dans le fichier. Le fichier
+ne porte **ni** `__inputs` à résoudre — d'où l'absence de question à l'import —
+**ni** `id` numérique, un `id` hérité du Grafana d'origine désignant un autre
+tableau sur le Grafana d'arrivée, que l'import écraserait. Son `uid` est
+`freeipa` : réimporter la version suivante met le même tableau à jour au lieu
+d'en créer un second (trois imports de suite laissent bien un seul tableau).
+
+La seconde variable, `serveur`, se remplit depuis les données
+(`label_values(freeipa_collecte_reussie, instance)`) : elle est multiple et vaut
+*All* par défaut, donc un domaine à un seul serveur IdM n'a rien à y faire.
+
+Quatre tests protègent cette propriété, parce qu'elle casse en silence : un nom
+de source figé rend des panneaux vides chez qui n'appelle pas son Prometheus
+« prometheus », et personne ne voit le message.
 
 ## Vérifier
 
@@ -186,12 +228,14 @@ des accords de réplication et lecture des RUV, isolation des sondes, écriture
 atomique, état des services, caches, inventaire, machines, chemins système, et
 le cas où la collecte échoue entièrement.
 
-`tests/test-tableau.py` — 16 cas : ce qui casse en silence dans un tableau. Une
+`tests/test-tableau.py` — 18 cas : ce qui casse en silence dans un tableau. Une
 source de données figée, qui rend des panneaux vides chez qui ne nomme pas la
 sienne comme l'auteur ; une mise en page qui déborde des 24 colonnes ; deux
 panneaux qui se recouvrent ; et tout ce qu'un second serveur IdM révèle — une
 série agrégée qui fond trois serveurs en un, une légende qui ne dit pas lequel,
-une table jointe sur une clé qui se répète d'un serveur à l'autre.
+une table jointe sur une clé qui se répète d'un serveur à l'autre. Et ce qui
+rendrait l'import impossible ou destructeur : une entrée `__inputs` à résoudre,
+un `id` numérique qui désignerait un autre tableau.
 
 `tests/test-installer.sh` — 12 cas, joués dans une racine jetable : ce qui est
 posé et avec quels droits, l'idempotence, le remplacement d'une version plus
@@ -204,9 +248,13 @@ suffixe d'annuaire et aucun royaume Kerberos appartenant à une infrastructure
 réelle. Le contrôle se fait par liste blanche : une liste de choses interdites
 laisserait passer tout ce qu'on n'a pas imaginé.
 
-`tests/test-commun.sh` et `tests/test-rendu.sh` — la citation des arguments qui
-traversent un shell distant, et le rendu des modèles, qui doit échouer plutôt
-que de laisser un trou.
+`tests/test-commun.sh` — 13 cas : la citation des arguments qui traversent un
+shell distant, et les valeurs exigées. Chaque script ne réclame que celles qu'il
+emploie : `verifier-deploiement.sh` n'a que faire d'un namespace, et le lui
+demander arrêterait qui ne gère pas Prometheus.
+
+`tests/test-rendu.sh` — 7 cas : le rendu des modèles, qui doit échouer plutôt que
+de laisser un trou.
 
 `tests/test-alertes-freeipa.yaml.modele` — 24 cas joués par `promtool` sur les
 règles **rendues**, celles qui seront appliquées. Les cas ajoutés pour la
@@ -218,8 +266,8 @@ qui évaluera vraiment ces règles, ou celle de `IMAGE_PROMETHEUS` pour jouer le
 tests sans cluster.
 
 Les expressions et le code ont été mutés pour vérifier que ces tests les
-retiennent : 18 mutations de l'exportateur, 12 du tableau, 20 des alertes, 50
-vues sur 50.
+retiennent : 18 mutations de l'exportateur, 12 du tableau, 20 des alertes, 8 du
+chargement de la configuration et des propriétés d'import, 58 vues sur 58.
 
 Deux pièges de rédaction, pour qui ajoutera des cas. Une assertion
 `exp_alerts: []` évaluée avant le `for` de l'alerte visée constate l'attente et

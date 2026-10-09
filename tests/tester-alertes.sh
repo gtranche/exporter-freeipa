@@ -54,6 +54,7 @@ echo "Regles extraites : $(grep -c '^  *- alert:' "$atelier/regles-extraites.yam
 # La meme version que celle qui evaluera ces regles pour de vrai.
 image="${IMAGE_PROMETHEUS:-}"
 if [ -z "$image" ]; then
+    : "${NAMESPACE:?NAMESPACE est exige pour relever l image du cluster, ou renseignez IMAGE_PROMETHEUS pour jouer les tests sans cluster}"
     image=$(kube get pods -l app.kubernetes.io/name=prometheus \
         -o jsonpath='{.items[0].spec.containers[?(@.name=="prometheus")].image}')
     [ -n "$image" ] || { echo "aucun pod Prometheus trouve : renseignez IMAGE_PROMETHEUS" >&2; exit 2; }

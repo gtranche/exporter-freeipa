@@ -4,7 +4,8 @@ Exposes the state of FreeIPA to Prometheus, and shows it in a Grafana dashboard.
 
 Nothing listens on the network: the script writes a file that the textfile
 collector of the `node_exporter` already running on the machine serves together
-with its own metrics. Everything goes through the directory's local socket,
+with its own metrics. So there is **only one port to open**, the one the
+`node_exporter` already uses, and only one target to declare in Prometheus. Everything goes through the directory's local socket,
 which authenticates root without a password — no secret is stored or handled.
 
 No site-specific value is written in this repository. The two things FreeIPA
@@ -102,12 +103,16 @@ Then adjust it. The file is ignored by git: its values do not leave the machine.
 The example values are in the ranges reserved for documentation (RFC 5737,
 RFC 2606) and reach nothing.
 
-It carries the address of the FreeIPA machine, the namespace, the job name and
-the host label, Grafana's Deployment, the system paths — which differ from one
-distribution to the next — and, if `kubectl` is not on this workstation, the
-host to reach it through. Every script reads it and refuses to run if a value is
-missing: a half-rendered manifest would apply without error and watch the wrong
-machine.
+Its blocks are grouped by **who needs them**, because that is not necessarily
+the same person: the ssh target and the system paths of the FreeIPA host — which
+differ from one distribution to the next — then the values for the file you hand
+to whoever runs Prometheus, then the ones only needed to apply the manifest
+yourself, then the ones only needed by the tests. Grafana does not appear at all:
+the dashboard is imported by hand.
+
+Every script demands only the values **it uses**, and names the one that is
+missing. If all you manage is FreeIPA hosts, the first two blocks are enough:
+`installer.sh` and `verifier-deploiement.sh` ask for nothing about the cluster.
 
 What is not in it, and need not be: the dirsrv instance, looked up in `/run`,
 and the domain suffix, read from the `rootDSE`. To force them anyway, set
@@ -163,28 +168,63 @@ Installing by hand, if you would rather:
     sudo systemctl daemon-reload
     sudo systemctl enable --now exporter-freeipa.timer
 
-## Installing the monitoring and the dashboard
+## The monitoring: a file to hand over
 
-    ./poser-supervision.sh
-    ./grafana/installer-tableau.sh
+Prometheus and Grafana may well not be yours. So this repository produces a
+**file**, and applies it only if you ask it to:
 
-`poser-supervision.sh` renders the template and applies it: `Service`,
-`Endpoints`, `ServiceMonitor` and fifteen alerts, six of them on replication.
-To get the manifest only — to commit into a GitOps repository, say:
+    ./rendre.sh kubernetes/supervision.yaml.modele > supervision-freeipa.yaml
 
-    ./rendre.sh kubernetes/supervision.yaml.modele
+The result is complete and self-contained: `Service`, `Endpoints`,
+`ServiceMonitor` and fifteen alerts, six of them on replication. That is the file
+you hand to whoever runs Prometheus — or commit into a GitOps repository. The
+values it needs are grouped in `configuration.env` under "le fichier à remettre
+à qui gère Prometheus"; no other block is read to produce it.
+
+A marker left without a value makes the rendering **fail**: a half-substituted
+manifest would apply without error and monitor the wrong machine.
+
+If you do have `kubectl` access to the cluster yourself, the short way exists:
+
+    ./poser-supervision.sh      # renders the template and applies it, idempotent
 
 The `Endpoints` are written by hand rather than as an `EndpointSlice`:
 prometheus-operator reads `Endpoints`, and a slice on its own would be invisible
 to it. For several IdM servers, adding one address per server to the same
 `Endpoints` is enough: alerts and dashboard tell them apart by `instance`.
 
-The dashboard installer creates a ConfigMap, then a volume and a mount in
-Grafana's Deployment: there is no auto-discovery here, each dashboard is an
-explicit mount. It restarts Grafana only if the mount was missing, and it checks
-its effect inside the container rather than the exit code of the patch. 28
-panels, two variables: the data source, which Grafana asks for when the
-dashboard opens, and the server — all of them by default.
+## Installing the dashboard
+
+Nothing to install, nothing to configure: `grafana/tableau-freeipa.json` imports
+as it stands.
+
+1. **Dashboards** → **New** → **Import**;
+2. paste the contents of `grafana/tableau-freeipa.json`, or upload the file,
+   then **Load**;
+3. the form asks for three things only — **Name**, **Folder**, **UID** — and for
+   no data source; **Import**.
+
+The dashboard then opens on its own **Source de données** list, top left,
+already set to your Grafana's default Prometheus. That is where the data source
+is picked, not at import time. *(Measured on Grafana 12.4.0, with a data source
+named `metriques-du-collegue` to prove no name is expected: the form asked
+nothing, and the dashboard opened on it.)*
+
+All 28 panels and both variables point at `${source}`, a `datasource`-typed
+variable: no data source name is frozen into the file. The file carries **no**
+`__inputs` to resolve — hence no question at import — and **no** numeric `id`,
+an `id` inherited from the Grafana it was born on designating a *different*
+dashboard on the target Grafana, which the import would overwrite. Its `uid` is
+`freeipa`: re-importing a later version updates the same dashboard instead of
+creating a second one (three imports in a row leave exactly one dashboard).
+
+The second variable, `serveur`, fills itself from the data
+(`label_values(freeipa_collecte_reussie, instance)`): it is multi-valued and
+defaults to *All*, so a single-server domain has nothing to do with it.
+
+Four tests guard this property, because it breaks silently: a frozen data source
+name renders empty panels for anyone whose Prometheus is not called
+"prometheus", and nobody sees a message.
 
 ## Checking a deployment
 
@@ -208,7 +248,7 @@ Kerberos counters including log rotation, replication agreement state and RUV
 parsing, probe isolation, atomic write, service state, caches, inventory, hosts,
 system paths, and the case where collection fails entirely.
 
-`tests/test-tableau.py` — 16 cases: what breaks silently in a dashboard. A
+`tests/test-tableau.py` — 18 cases: what breaks silently in a dashboard. A
 hardcoded data source, which renders empty panels for anyone who does not name
 theirs as the author did; a layout that overflows the 24 columns; two
 overlapping panels; and everything a second IdM server reveals — an aggregated
@@ -225,9 +265,13 @@ anything is written.
 and no Kerberos realm belonging to a real infrastructure. The check is an
 allowlist: a list of forbidden things lets through everything nobody thought of.
 
-`tests/test-commun.sh` and `tests/test-rendu.sh` — quoting of arguments that
-cross a remote shell, and template rendering, which must fail rather than leave
-a hole.
+`tests/test-commun.sh` — 13 cases: quoting of arguments that cross a remote
+shell, and the required values. Each script asks only for the ones it uses:
+`verifier-deploiement.sh` has no use for a namespace, and demanding one would
+stop anybody who does not run Prometheus.
+
+`tests/test-rendu.sh` — 7 cases: template rendering, which must fail rather than
+leave a hole.
 
 `tests/test-alertes-freeipa.yaml.modele` — 24 cases played by `promtool` against
 the **rendered** rules, the ones that will actually be applied. The cases added
@@ -239,8 +283,8 @@ that will really evaluate these rules, or the one in `IMAGE_PROMETHEUS` to run
 the tests without a cluster.
 
 The expressions and the code were mutated to check that these tests catch them:
-18 mutations of the exporter, 12 of the dashboard, 20 of the alerts, 50 caught
-out of 50.
+18 mutations of the exporter, 12 of the dashboard, 20 of the alerts, 8 of
+configuration loading and of the import properties, 58 caught out of 58.
 
 Two writing traps, for whoever adds cases. An `exp_alerts: []` assertion
 evaluated before the alert's `for` has elapsed observes the wait, not the rule:

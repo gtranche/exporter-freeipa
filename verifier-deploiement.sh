@@ -12,10 +12,10 @@ set -uo pipefail
 
 ICI="$(cd "$(dirname "$0")" && pwd)"
 . "$ICI/commun.sh"
-charger_configuration "$ICI"
+charger_configuration "$ICI" FICHIER_METRIQUES
 
 CIBLE=${1:-${CIBLE_SSH:?CIBLE_SSH n est pas renseigne dans configuration.env}}
-PROM=${FICHIER_METRIQUES:?FICHIER_METRIQUES n est pas renseigne}
+PROM=$FICHIER_METRIQUES
 ecarts=0
 
 dire() { printf '%-52s %s\n' "$1" "$2"; }

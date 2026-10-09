@@ -9,17 +9,12 @@ ici="$(cd "$(dirname "$0")" && pwd)"
 racine="$(cd "$ici/.." && pwd)"
 atelier="$(mktemp -d)"
 trap 'rm -rf "$atelier"' EXIT INT TERM
-reussis=0
-echoues=0
+. "$ici/cas.sh"
 
 # Chaque cas joue rendre.sh avec sa propre configuration, jamais celle du poste.
 rendre() {
     CONFIGURATION="$atelier/configuration.env" "$racine/rendre.sh" "$@"
 }
-
-enonce() { printf '  %-72s ' "$1"; }
-reussi() { echo ok; reussis=$((reussis + 1)); }
-echoue() { echo "ECHEC : $1"; echoues=$((echoues + 1)); }
 
 complete() { cp "$racine/configuration.env.exemple" "$atelier/configuration.env"; }
 
@@ -90,6 +85,4 @@ else
     echoue "$(cat "$atelier/err")"
 fi
 
-echo
-echo "$reussis reussi(s), $echoues echec(s)."
-[ "$echoues" -eq 0 ]
+bilan

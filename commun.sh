@@ -2,8 +2,13 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Charge la configuration et joue kubectl la ou il faut. A sourcer, pas a jouer.
 
+# Les noms exiges sont ceux que le script appelant emploie, et eux seuls :
+# reclamer les valeurs du cluster a qui ne gere que ses hotes FreeIPA lui
+# ferait renseigner un namespace dont il n a que faire.
+#   charger_configuration "$ici" NAMESPACE
 charger_configuration() {
     racine="$1"
+    shift
     fichier="${CONFIGURATION:-$racine/configuration.env}"
     if [ ! -f "$fichier" ]; then
         echo "configuration absente : $fichier" >&2
@@ -14,9 +19,7 @@ charger_configuration() {
     set -a
     . "$fichier"
     set +a
-    for nom in ADRESSE_FREEIPA PORT_NODE_EXPORTER NAMESPACE NOM_JOB \
-               ETIQUETTE_HOTE INTERVALLE_SCRAPE SELECTEUR_PROMETHEUS \
-               DEPLOIEMENT_GRAFANA RACINE_TABLEAUX; do
+    for nom in "$@"; do
         eval "valeur=\${$nom:-}"
         [ -n "$valeur" ] || { echo "$nom n est pas renseigne dans $fichier" >&2; exit 2; }
     done

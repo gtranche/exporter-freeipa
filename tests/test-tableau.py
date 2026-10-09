@@ -46,6 +46,19 @@ class Tableau(unittest.TestCase):
         for ou, valeur in references:
             self.assertEqual(valeur, {"type": "prometheus", "uid": "${source}"}, ou)
 
+    def test_le_tableau_s_importe_tel_quel_sans_rien_a_resoudre(self):
+        # L export « for sharing externally » de Grafana remplace les sources
+        # par des entrees ${DS_...} a resoudre via __inputs. Celui-la n en a
+        # pas : colle dans la boite d import, il s ouvre sur la source choisie.
+        self.assertNotIn("__inputs", self.d)
+        self.assertNotIn("__requires", self.d)
+        self.assertNotIn("${DS_", json.dumps(self.d))
+
+    def test_le_tableau_ne_porte_pas_d_identifiant_numerique(self):
+        # Un « id » herite du Grafana ou le tableau est ne designe un AUTRE
+        # tableau sur le Grafana d arrivee : a l import, il l ecraserait.
+        self.assertIsNone(self.d.get("id"))
+
     def test_la_variable_de_source_est_declaree_sinon_rien_ne_resout(self):
         variables = self.d["templating"]["list"]
         source = next(v for v in variables if v["name"] == "source")

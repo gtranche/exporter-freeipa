@@ -9,12 +9,7 @@ ici="$(cd "$(dirname "$0")" && pwd)"
 racine="$(cd "$ici/.." && pwd)"
 atelier="$(mktemp -d)"
 trap 'rm -rf "$atelier"' EXIT INT TERM
-reussis=0
-echoues=0
-
-enonce() { printf '  %-72s ' "$1"; }
-reussi() { echo ok; reussis=$((reussis + 1)); }
-echoue() { echo "ECHEC : $1"; echoues=$((echoues + 1)); }
+. "$ici/cas.sh"
 
 cible="$atelier/racine"
 installer() { "$racine/installer.sh" --racine "$cible" "$@"; }
@@ -134,6 +129,4 @@ else
     echoue "$(cat "$atelier/inconnu")"
 fi
 
-echo
-echo "$reussis reussi(s), $echoues echec(s)."
-[ "$echoues" -eq 0 ]
+bilan
