@@ -1996,6 +1996,703 @@
         },
         "overrides": []
       }
+    },
+    {
+      "type": "stat",
+      "title": "Journal d'audit",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${source}"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 78,
+        "w": 5,
+        "h": 4
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${source}"
+          },
+          "expr": "freeipa_audit_journal_actif{instance=~\"$serveur\"}",
+          "refId": "A",
+          "format": "time_series",
+          "instant": true,
+          "legendFormat": "{{instance}}"
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "background",
+        "graphMode": "none",
+        "textMode": "value_and_name"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": {
+                  "text": "éteint",
+                  "color": "red",
+                  "index": 0
+                },
+                "1": {
+                  "text": "actif",
+                  "color": "green",
+                  "index": 1
+                }
+              }
+            }
+          ]
+        },
+        "overrides": []
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Format du journal",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${source}"
+      },
+      "gridPos": {
+        "x": 5,
+        "y": 78,
+        "w": 5,
+        "h": 4
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${source}"
+          },
+          "expr": "freeipa_audit_format_reconnu{instance=~\"$serveur\"}",
+          "refId": "A",
+          "format": "time_series",
+          "instant": true,
+          "legendFormat": "{{instance}}"
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "background",
+        "graphMode": "none",
+        "textMode": "value_and_name"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": {
+                  "text": "illisible",
+                  "color": "red",
+                  "index": 0
+                },
+                "1": {
+                  "text": "lu",
+                  "color": "green",
+                  "index": 1
+                }
+              }
+            }
+          ]
+        },
+        "overrides": []
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Entrées suivies",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${source}"
+      },
+      "gridPos": {
+        "x": 10,
+        "y": 78,
+        "w": 4,
+        "h": 4
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${source}"
+          },
+          "expr": "max by (job) (freeipa_entrees_suivies{instance=~\"$serveur\"})",
+          "refId": "A",
+          "format": "time_series",
+          "instant": true
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "none",
+        "graphMode": "none",
+        "textMode": "value"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "decimals": 0
+        },
+        "overrides": []
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Dernière main humaine",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${source}"
+      },
+      "gridPos": {
+        "x": 14,
+        "y": 78,
+        "w": 6,
+        "h": 4
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${source}"
+          },
+          "expr": "time() - max by (job, auteur) (freeipa_derniere_modification_timestamp{instance=~\"$serveur\",genre=\"compte\"})",
+          "refId": "A",
+          "format": "time_series",
+          "instant": true,
+          "legendFormat": "{{auteur}}"
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "none",
+        "graphMode": "none",
+        "textMode": "value_and_name"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "decimals": 0
+        },
+        "overrides": []
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Écritures refusées",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${source}"
+      },
+      "gridPos": {
+        "x": 20,
+        "y": 78,
+        "w": 4,
+        "h": 4
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${source}"
+          },
+          "expr": "sum(freeipa_audit_echecs_total{instance=~\"$serveur\"})",
+          "refId": "A",
+          "format": "time_series",
+          "instant": true
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "background",
+        "graphMode": "none",
+        "textMode": "value"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "decimals": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 1
+              }
+            ]
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "type": "table",
+      "title": "Dernières écritures dans l'annuaire",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${source}"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 82,
+        "w": 14,
+        "h": 9
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${source}"
+          },
+          "expr": "time() - max by (job, auteur, genre, entree, branche) (freeipa_modification_recente_timestamp{instance=~\"$serveur\"})",
+          "refId": "A",
+          "format": "table",
+          "instant": true
+        }
+      ],
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true,
+              "__name__": true,
+              "job": true,
+              "endpoint": true,
+              "namespace": true,
+              "service": true
+            },
+            "renameByName": {
+              "auteur": "Auteur",
+              "genre": "Genre",
+              "entree": "Entrée",
+              "branche": "Branche",
+              "Value": "Il y a"
+            }
+          }
+        },
+        {
+          "id": "sortBy",
+          "options": {
+            "fields": {},
+            "sort": [
+              {
+                "field": "Il y a",
+                "desc": false
+              }
+            ]
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Il y a"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "s"
+              },
+              {
+                "id": "decimals",
+                "value": 0
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "type": "barchart",
+      "title": "Qui a écrit dans l'annuaire",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${source}"
+      },
+      "gridPos": {
+        "x": 14,
+        "y": 82,
+        "w": 10,
+        "h": 9
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${source}"
+          },
+          "expr": "max by (job, auteur, genre) (freeipa_entrees_modifiees{instance=~\"$serveur\"})",
+          "refId": "A",
+          "format": "time_series",
+          "instant": true,
+          "legendFormat": "{{auteur}} · modifiées"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${source}"
+          },
+          "expr": "max by (job, auteur, genre) (freeipa_entrees_creees{instance=~\"$serveur\"})",
+          "refId": "B",
+          "format": "time_series",
+          "instant": true,
+          "legendFormat": "{{auteur}} · créées"
+        }
+      ],
+      "options": {
+        "orientation": "horizontal",
+        "legend": {
+          "showLegend": true,
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "decimals": 0
+        },
+        "overrides": []
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Écritures tracées par le journal d'audit",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${source}"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 91,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${source}"
+          },
+          "refId": "A",
+          "format": "time_series",
+          "expr": "sum by (instance, genre, operation) (rate(freeipa_audit_ecritures_total{instance=~\"$serveur\"}[$__rate_interval]))",
+          "legendFormat": "{{instance}} · {{genre}} · {{operation}}"
+        }
+      ],
+      "options": {
+        "legend": {
+          "showLegend": true,
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops",
+          "custom": {
+            "fillOpacity": 10
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "type": "table",
+      "title": "Attributs touchés",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${source}"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 91,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${source}"
+          },
+          "expr": "topk(15, sum by (instance, attribut, operation) (freeipa_audit_attributs_total{instance=~\"$serveur\"}))",
+          "refId": "A",
+          "format": "table",
+          "instant": true
+        }
+      ],
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true,
+              "__name__": true,
+              "job": true,
+              "endpoint": true,
+              "namespace": true,
+              "service": true
+            },
+            "renameByName": {
+              "attribut": "Attribut",
+              "operation": "Opération",
+              "Value": "Écritures",
+              "instance": "Serveur"
+            }
+          }
+        },
+        {
+          "id": "sortBy",
+          "options": {
+            "fields": {},
+            "sort": [
+              {
+                "field": "Écritures",
+                "desc": true
+              }
+            ]
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "decimals": 0
+        },
+        "overrides": []
+      }
+    },
+    {
+      "type": "table",
+      "title": "Qui a modifié quoi — journal d'audit",
+      "description": "Les dernières écritures tracées par 389-DS : l'auteur, l'entrée touchée, son genre, et l'attribut qu'il a changé. « Membres » ne porte que des identités d'appartenance.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${source}"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 99,
+        "w": 24,
+        "h": 10
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${source}"
+          },
+          "expr": "time() - freeipa_audit_ecriture_recente_timestamp{instance=~\"$serveur\"}",
+          "refId": "A",
+          "format": "table",
+          "instant": true
+        }
+      ],
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true,
+              "__name__": true,
+              "job": true,
+              "endpoint": true,
+              "namespace": true,
+              "service": true
+            },
+            "renameByName": {
+              "auteur": "Auteur",
+              "genre": "Genre",
+              "objet": "Genre d'objet",
+              "entree": "Entrée",
+              "operation": "Opération",
+              "attributs": "Attributs",
+              "membres": "Membres",
+              "instance": "Serveur",
+              "Value": "Il y a"
+            }
+          }
+        },
+        {
+          "id": "sortBy",
+          "options": {
+            "fields": {},
+            "sort": [
+              {
+                "field": "Il y a",
+                "desc": false
+              }
+            ]
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Il y a"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "s"
+              },
+              {
+                "id": "decimals",
+                "value": 0
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "type": "table",
+      "title": "Qui écrit quoi, par genre d'objet",
+      "description": "Cumul depuis le premier passage de l'exportateur. Le panneau voisin en donne le détail nommé, borné aux dernières écritures.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${source}"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 109,
+        "w": 14,
+        "h": 9
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${source}"
+          },
+          "expr": "topk(25, sum by (instance, auteur, genre, objet, operation) (freeipa_audit_ecritures_total{instance=~\"$serveur\"}))",
+          "refId": "A",
+          "format": "table",
+          "instant": true
+        }
+      ],
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true,
+              "__name__": true,
+              "job": true,
+              "endpoint": true,
+              "namespace": true,
+              "service": true
+            },
+            "renameByName": {
+              "auteur": "Auteur",
+              "genre": "Genre",
+              "objet": "Genre d'objet",
+              "operation": "Opération",
+              "instance": "Serveur",
+              "Value": "Écritures"
+            }
+          }
+        },
+        {
+          "id": "sortBy",
+          "options": {
+            "fields": {},
+            "sort": [
+              {
+                "field": "Écritures",
+                "desc": true
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "type": "stat",
+      "title": "Taille du journal d'audit",
+      "description": "389-DS le plafonne : passé la limite il tourne, et les écritures les plus anciennes ne sont plus consultables.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${source}"
+      },
+      "gridPos": {
+        "x": 14,
+        "y": 109,
+        "w": 10,
+        "h": 4
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${source}"
+          },
+          "expr": "max by (instance) (freeipa_audit_journal_octets{instance=~\"$serveur\"})",
+          "refId": "A",
+          "legendFormat": "{{instance}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes",
+          "decimals": 1
+        },
+        "overrides": []
+      }
     }
   ],
   "templating": {

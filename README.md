@@ -17,7 +17,7 @@ Documentation en anglais : [README.en.md](README.en.md).
 
 ## Ce qui est mesuré
 
-55 séries, sous le préfixe `freeipa_` :
+66 séries, sous le préfixe `freeipa_` :
 
 | domaine | séries |
 |---|---|
@@ -30,9 +30,10 @@ Documentation en anglais : [README.en.md](README.en.md).
 | contenu | utilisateurs par état, groupes, machines, groupes de machines, services, règles HBAC et sudo, zones DNS |
 | machines | `freeipa_machine`, une série par machine enrôlée |
 | certificats | `freeipa_certificat_expiration_timestamp` |
+| écritures | `freeipa_entrees_suivies`, `_modifiees`, `_creees`, `freeipa_derniere_modification_timestamp`, `freeipa_modification_recente_timestamp`, et sept séries du journal d'audit |
 | collecte | `freeipa_collecte_reussie`, `_timestamp`, `_duree_secondes`, `_sonde_reussie` |
 
-Trois mesures méritent un mot.
+Quatre mesures méritent un mot.
 
 `freeipa_temps_reponse_secondes{interface="ldap_premiere"}` existe parce que la
 **première** recherche d'une connexion neuve coûte parfois 250 ms, par fenêtres
@@ -48,9 +49,50 @@ dire que la base est peu lue. Ce qui compte est la conjonction, cache rempli
 **et** lectures qui le manquent.
 
 `freeipa_collecte_sonde_reussie{sonde="..."}` nomme la sonde qui est tombée. Les
-dix collecteurs sont joués un à un : une panne de l'un ne prive plus des neuf
-autres. Mesuré sur un banc où `ipactl` était absent : 9 lignes publiées avant,
+douze collecteurs sont joués un à un : une panne de l'un ne prive plus des
+onze autres. Mesuré sur un banc où `ipactl` était absent : 9 lignes publiées avant,
 75 après, et la sonde fautive désignée.
+
+`freeipa_audit_*` et `freeipa_entrees_*` répondent à « qui a modifié quoi », par
+deux sources dont aucune ne remplace l'autre. Les attributs opérationnels de
+l'annuaire — `modifiersName`, `creatorsName` — sont là sans qu'on ait rien à
+allumer, mais ils ne gardent que la **dernière** écriture par entrée et ne
+disent pas quel attribut a changé. Le journal d'audit de 389-DS donne les deux,
+et **il est éteint par défaut** : relevé sur un serveur en service, le fichier
+faisait 0 octet et datait de deux ans. Pour l'allumer, sur la machine :
+
+```sh
+sudo dsconf slapd-EXEMPLE-TEST config replace nsslapd-auditlog-logging-enabled=on
+```
+
+La recherche des auteurs, elle, coûte : 389-DS n'indexe pas `modifiersName`,
+donc elle parcourt tout le suffixe. Relevé le 2026-11-01 sur 550 entrées,
+12,7 ms et `notes=U, Partially Unindexed Filter` — un coût qui suit la taille de
+l'annuaire, pas le nombre d'écritures. Elle est donc rejouée au plus toutes les
+`PERIODE_MODIFICATIONS` secondes (900 par défaut) et ses séries sont republiées
+entre-temps depuis l'état : une série qui disparaîtrait ferait battre les
+alertes posées sur elle.
+
+L'exportateur relit le chemin du journal dans `cn=config` à chaque collecte :
+rien à renseigner de ce côté. `freeipa_audit_journal_actif` dit l'état de
+l'interrupteur, et `freeipa_audit_format_reconnu` vaut 0 quand le fichier porte
+des octets que l'analyseur ne sait pas lire — sans quoi un journal illisible
+rendrait zéro, ce qui ressemble à « rien ne bouge ».
+
+**Aucune valeur n'est publiée, sauf celles d'une liste blanche de seize
+attributs d'appartenance** — `member`, `memberOf`, `memberUser`, `memberHost`,
+`ipaSudoRunAs`... Ce sont des identités, jamais un secret, et c'est le seul
+moyen de répondre à « qui a ajouté **quel** utilisateur dans ce groupe ». Tout
+le reste ne sort que par son *nom* d'attribut, pour qu'un secret journalisé ne
+puisse pas ressortir en métrique. Une liste blanche, et non un motif : un motif
+laisserait passer ce qui s'y conforme par accident. Au-delà de cinq identités,
+l'étiquette est tronquée avec un suffixe `+N` qui nomme ce qui manque.
+
+`freeipa_audit_ecriture_recente_timestamp` porte les vingt derniers gestes et
+nomme, pour chacun, l'auteur, le **genre d'objet** touché — utilisateur,
+groupe, machine, règle HBAC, règle sudo... déduit du conteneur du DN, car tous
+vivent sous `cn=accounts` —, l'entrée, l'opération, les attributs et les
+identités concernées.
 
 ## Plusieurs serveurs IdM, en actif-actif
 
@@ -154,7 +196,7 @@ Prometheus et Grafana ne sont pas forcément à vous. Ce dépôt produit donc un
     ./rendre.sh kubernetes/supervision.yaml.modele > supervision-freeipa.yaml
 
 Le résultat est complet et autonome : `Service`, `Endpoints`, `ServiceMonitor` et
-quinze alertes, dont six sur la réplication. C'est ce fichier que vous remettez à
+dix-neuf alertes, dont six sur la réplication et quatre sur les écritures. C'est ce fichier que vous remettez à
 qui exploite Prometheus — ou que vous versez dans un dépôt GitOps. Les valeurs
 qu'il demande sont groupées dans `configuration.env` sous « le fichier à remettre
 à qui gère Prometheus » ; les autres blocs ne sont pas lus pour le produire.

@@ -8,6 +8,7 @@ passe : aucun secret n'est stocke ni manipule.
 """
 
 import base64
+import heapq
 import json
 import os
 import re
@@ -24,6 +25,16 @@ DESTINATION = os.environ.get("FICHIER_METRIQUES",
                              "/var/lib/node_exporter/textfile_collector/freeipa.prom")
 ETAT = os.environ.get("FICHIER_ETAT", "/var/lib/node_exporter/etat-freeipa.json")
 JOURNAL_KDC = os.environ.get("JOURNAL_KDC", "/var/log/krb5kdc.log")
+# Vide : le chemin du journal d audit est lu dans la configuration de 389-DS,
+# qui en est la seule source de verite.
+JOURNAL_AUDIT = os.environ.get("JOURNAL_AUDIT", "")
+LIMITE_MODIFICATIONS = int(os.environ.get("LIMITE_MODIFICATIONS", "20"))
+# 389-DS n indexe pas modifiersName : la recherche des auteurs parcourt tout
+# le suffixe. Mesure du 2026-11-01 sur 550 entrees : 12,7 ms et « notes=U,
+# Partially Unindexed Filter ». Le cout suit la taille de l annuaire, pas le
+# nombre d ecritures ; l etat qu elle decrit bouge lentement.
+PERIODE_MODIFICATIONS = int(os.environ.get("PERIODE_MODIFICATIONS", "900"))
+PLAFOND_ETIQUETTES = int(os.environ.get("PLAFOND_ETIQUETTES", "200"))
 
 # id:heure:ops_init:ops_fin:rw:dn:...:connid:ip=adresse
 BASES_LDBM = {
@@ -33,6 +44,9 @@ BASES_LDBM = {
 }
 
 CONNEXION = re.compile(r"^(\d+):(\d{14})Z:(\d+):(\d+):[^:]*:(.*):\d+:\d+:\d+:\d+:ip=(.*)$")
+# Un DN peut porter une virgule echappee : « dc\\=local\\,dc\\=skaveo » est un
+# seul composant.
+SEPARATEUR_DN = re.compile(r"(?<!\\),")
 
 
 class Annuaire:
@@ -91,20 +105,14 @@ class Annuaire:
         """Rend une liste d entrees, chacune en dictionnaire de listes."""
         trouvees = []
         for ligne in self._appeler(base, filtre, list(demandes), portee).splitlines():
-            if ligne.startswith("#") or ":" not in ligne:
+            decoupe = champ(ligne)
+            if decoupe is None:
                 continue
-            cle, _, valeur = ligne.partition(":")
-            # « attribut:: valeur » : ldapsearch encode en base64 ce qui n est
-            # pas du texte imprimable, et les compteurs de replication le sont.
-            if valeur.startswith(":"):
-                try:
-                    valeur = base64.b64decode(valeur[1:].strip()).decode("utf-8", "replace")
-                except ValueError:
-                    valeur = ""
-            if cle.strip().lower() == "dn":
+            cle, valeur = decoupe
+            if cle == "dn":
                 trouvees.append({})
             if trouvees:
-                trouvees[-1].setdefault(cle.strip().lower(), []).append(str(valeur).strip())
+                trouvees[-1].setdefault(cle, []).append(valeur)
         return trouvees
 
     def compter(self, base, filtre):
@@ -139,11 +147,41 @@ class Registre:
         return "\n".join(self.lignes) + "\n"
 
 
+def champ(ligne):
+    """Decoupe une ligne LDIF en (attribut minuscule, valeur).
+
+    « attribut:: valeur » : ldapsearch encode en base64 ce qui n est pas du
+    texte imprimable, et les compteurs de replication le sont.
+    """
+    if not ligne or ligne.startswith("#") or ":" not in ligne:
+        return None
+    cle, _, valeur = ligne.partition(":")
+    if valeur.startswith(":"):
+        try:
+            valeur = base64.b64decode(valeur[1:].strip()).decode("utf-8", "replace")
+        except ValueError:
+            valeur = ""
+    return cle.strip().lower(), str(valeur).strip()
+
+
 def epoque(valeur, defaut=0):
     """Convertit une heure generalisee LDAP (20261009113622Z) en epoque Unix."""
     try:
         t = datetime.strptime(valeur.rstrip("Z"), "%Y%m%d%H%M%S")
         return int(t.replace(tzinfo=timezone.utc).timestamp())
+    except ValueError:
+        return defaut
+
+
+def epoque_locale(valeur, defaut=0):
+    """Convertit l heure d un enregistrement d audit (20261101225437) en epoque.
+
+    389-DS l ecrit en heure LOCALE, contrairement aux heures generalisees de
+    l annuaire : mesure du 2026-11-01, « time: 20261101225437 » pour le meme
+    enregistrement que « modifytimestamp: 20261101215437Z ».
+    """
+    try:
+        return int(datetime.strptime(valeur[:14], "%Y%m%d%H%M%S").timestamp())
     except ValueError:
         return defaut
 
@@ -287,6 +325,8 @@ def lisible(dn):
         return dn.split(",")[0][17:]
     if dn.startswith("uid="):
         return dn.split(",")[0][4:]
+    if dn.startswith("idnsname="):
+        return dn.split(",")[0][9:]
     if dn.startswith("cn="):
         return dn.split(",")[0][3:]
     return dn[:60] or "(anonyme)"
@@ -338,35 +378,106 @@ def machines(a, registre):
         registre.ajouter("freeipa_machine", 1, machine=nom)
 
 
+def lire_etat():
+    """Rend l etat garde entre deux passages, ou un etat vide s il est illisible.
+
+    Les sondes le lisent et l ecrivent l une apres l autre : chacune reprend ce
+    que la precedente a ecrit, et aucune n efface les cles des autres.
+    """
+    try:
+        with open(ETAT) as f:
+            garde = json.load(f)
+        return garde if isinstance(garde, dict) else {}
+    except (ValueError, OSError):
+        return {}
+
+
+def ecrire_etat(etat):
+    try:
+        with open(ETAT, "w") as f:
+            json.dump(etat, f)
+    except OSError:
+        pass
+
+
+class Releve:
+    """Une mesure trop couteuse pour chaque passage, gardee dans l etat.
+
+    Ses series sont republiees a chaque passage depuis le dernier releve : une
+    serie qui disparaitrait ferait battre les alertes posees sur elle.
+    """
+
+    def __init__(self, nom, periode):
+        self.nom = nom
+        self.periode = periode
+
+    def mesure(self, relever):
+        etat = lire_etat()
+        garde = etat.get(self.nom) or {}
+        if time.time() - garde.get("quand", 0) >= self.periode:
+            garde = {"quand": time.time(), "mesure": relever()}
+            etat[self.nom] = garde
+            ecrire_etat(etat)
+        return garde["mesure"]
+
+
+class Journal:
+    """Lit les lignes nouvelles d un journal qui grossit, et survit a sa rotation.
+
+    Inode et position sont retenus dans l etat partage : relire nine megaoctets
+    a chaque passage couterait plus que la mesure ne vaut.
+    """
+
+    def __init__(self, chemin, prefixe=""):
+        self.chemin = chemin
+        # Prefixe vide pour le journal du KDC : ses cles sont deja ecrites en
+        # production, les renommer ferait repartir ses compteurs de zero.
+        self._inode = prefixe + "_inode" if prefixe else "inode"
+        self._position = prefixe + "_position" if prefixe else "offset"
+        self.etat = lire_etat()
+
+    def parcourir(self, action):
+        """Passe chaque ligne nouvelle a l action, puis retient la position.
+
+        Une action plutot qu un generateur : f.tell() ne vaut la fin de ce qui
+        a ete lu qu une fois la boucle achevee, donc une iteration interrompue
+        retiendrait une position fausse.
+        """
+        if not os.path.exists(self.chemin):
+            return
+        st = os.stat(self.chemin)
+        position = self.etat.get(self._position, 0)
+        # Rotation : l inode change, ou le fichier a rapetisse.
+        if st.st_ino != self.etat.get(self._inode) or st.st_size < position:
+            position = 0
+        with open(self.chemin, "r", errors="replace") as f:
+            f.seek(position)
+            for ligne in f:
+                action(ligne)
+            self.etat[self._inode] = st.st_ino
+            self.etat[self._position] = f.tell()
+
+    def enregistrer(self):
+        ecrire_etat(self.etat)
+
+
 def kerberos(registre):
     """Compte les requetes du KDC en ne relisant que les lignes nouvelles."""
-    etat = {"inode": 0, "offset": 0, "as": 0, "tgs": 0, "echecs": 0}
-    if os.path.exists(ETAT):
-        try:
-            etat.update(json.load(open(ETAT)))
-        except (ValueError, OSError):
-            pass
+    journal = Journal(JOURNAL_KDC)
+    etat = journal.etat
+    for cle in ("as", "tgs", "echecs"):
+        etat.setdefault(cle, 0)
 
-    if os.path.exists(JOURNAL_KDC):
-        st = os.stat(JOURNAL_KDC)
-        # Rotation : l inode change, ou le fichier a rapetisse.
-        if st.st_ino != etat["inode"] or st.st_size < etat["offset"]:
-            etat.update({"inode": st.st_ino, "offset": 0})
-        with open(JOURNAL_KDC, "r", errors="replace") as f:
-            f.seek(etat["offset"])
-            for ligne in f:
-                if "AS_REQ" in ligne:
-                    etat["as"] += 1
-                elif "TGS_REQ" in ligne:
-                    etat["tgs"] += 1
-                if "FAILED" in ligne or "CLIENT_NOT_FOUND" in ligne or "PREAUTH_FAILED" in ligne:
-                    etat["echecs"] += 1
-            etat["offset"] = f.tell()
-        try:
-            with open(ETAT, "w") as f:
-                json.dump(etat, f)
-        except OSError:
-            pass
+    def compter(ligne):
+        if "AS_REQ" in ligne:
+            etat["as"] += 1
+        elif "TGS_REQ" in ligne:
+            etat["tgs"] += 1
+        if "FAILED" in ligne or "CLIENT_NOT_FOUND" in ligne or "PREAUTH_FAILED" in ligne:
+            etat["echecs"] += 1
+
+    journal.parcourir(compter)
+    journal.enregistrer()
 
     registre.declarer("freeipa_kerberos_requetes_total", "Requetes traitees par le KDC.", "counter")
     registre.ajouter("freeipa_kerberos_requetes_total", etat["as"], type="AS")
@@ -564,6 +675,419 @@ def replication(a, registre):
         registre.ajouter("freeipa_replication_accord_changements_envoyes_total", envoyes, **e)
         registre.ajouter("freeipa_replication_accord_changements_omis_total", omis, **e)
 
+def genre_auteur(dn):
+    """Classe l auteur d une modification.
+
+    La premiere question posee a une trace d audit n est pas « quel DN » mais
+    « est-ce une personne ou un automate ».
+    """
+    b = (dn or "").lower()
+    # o=ipaca est le suffixe propre a l autorite de certification de FreeIPA :
+    # les « uid= » qui y vivent sont ses automates, jamais des personnes.
+    if b.endswith("o=ipaca"):
+        return "autorite"
+    if b.startswith("uid="):
+        return "compte"
+    if b.startswith("krbprincipalname="):
+        return "service"
+    if b.startswith("fqdn="):
+        return "machine"
+    if ",cn=plugins,cn=config" in b:
+        return "greffon"
+    if b.startswith("cn=directory manager"):
+        return "administrateur"
+    return "autre"
+
+
+def branche(dn, base):
+    """Rend la branche de l annuaire qui porte l entree.
+
+    Le RDN seul ne dit pas si « wazuh » est une machine, une zone DNS ou une
+    regle : la branche le dit.
+    """
+    sous_le_suffixe = bool(base) and dn.lower().endswith(base.lower())
+    reste = dn[:-len(base)].rstrip(",") if sous_le_suffixe else dn
+    composants = [c for c in SEPARATEUR_DN.split(reste) if c]
+    if len(composants) > 1:
+        return composants[-1]
+    # Posee a meme le suffixe, l entree n a pas de branche intermediaire : lui
+    # rendre son propre RDN ne ferait que repeter l etiquette « entree ».
+    return base if sous_le_suffixe else (composants[0] or base)
+
+
+# Les conteneurs de FreeIPA, lus dans api.env de l installation le 2026-11-01.
+# Aucun ne se devine : les groupes reseau vivent sous cn=ng,cn=alt.
+CONTENEURS = {
+    "cn=users,cn=accounts": "utilisateur",
+    "cn=staged users,cn=accounts,cn=provisioning": "utilisateur en attente",
+    "cn=deleted users,cn=accounts,cn=provisioning": "utilisateur supprime",
+    "cn=groups,cn=accounts": "groupe",
+    "cn=computers,cn=accounts": "machine",
+    "cn=hostgroups,cn=accounts": "groupe de machines",
+    "cn=services,cn=accounts": "service",
+    "cn=roles,cn=accounts": "role",
+    "cn=views,cn=accounts": "vue d identite",
+    "cn=subids,cn=accounts": "sous-identifiants",
+    "cn=ng,cn=alt": "groupe reseau",
+    "cn=hbac": "regle hbac",
+    "cn=hbacservices,cn=hbac": "service hbac",
+    "cn=hbacservicegroups,cn=hbac": "groupe de services hbac",
+    "cn=sudorules,cn=sudo": "regle sudo",
+    "cn=sudocmds,cn=sudo": "commande sudo",
+    "cn=sudocmdgroups,cn=sudo": "groupe de commandes sudo",
+    "cn=permissions,cn=pbac": "permission",
+    "cn=privileges,cn=pbac": "privilege",
+    "cn=dns": "zone dns",
+    "cn=servers,cn=dns": "serveur dns",
+    "cn=cas,cn=ca": "autorite de certification",
+    "cn=caacls,cn=ca": "regle d acces au certificat",
+    "cn=certprofiles,cn=ca": "profil de certificat",
+    "cn=usermap,cn=selinux": "correspondance selinux",
+    "cn=certmaprules,cn=certmap": "regle de correspondance de certificat",
+    "cn=vaults,cn=kra": "coffre",
+    "cn=otp": "jeton otp",
+    "cn=automount": "montage automatique",
+    "cn=trusts": "approbation",
+    "cn=automember,cn=etc": "regle d appartenance automatique",
+    "cn=ranges,cn=etc": "plage d identifiants",
+    "cn=sysaccounts,cn=etc": "compte systeme",
+    "cn=masters,cn=ipa,cn=etc": "serveur du domaine",
+    "cn=topology,cn=ipa,cn=etc": "topologie de replication",
+    "cn=kerberos": "kerberos",
+    "cn=etc": "configuration du domaine",
+    "cn=accounts": "compte",
+}
+
+
+def objet(dn, base):
+    """Rend le genre d objet que porte le DN : « groupe », « regle hbac »...
+
+    La branche ne suffit pas : utilisateurs, groupes, machines et services
+    vivent tous sous cn=accounts, et c est le conteneur qui les distingue.
+    Inconnu, le genre retombe sur la branche plutot que d etre tu.
+    """
+    bas = dn.lower()
+    if bas.endswith("o=ipaca"):
+        return "autorite de certification"
+    if bas == "cn=config" or bas.endswith(",cn=config"):
+        return "configuration du serveur"
+    sous_le_suffixe = bool(base) and bas.endswith(base.lower())
+    reste = dn[:-len(base)].rstrip(",") if sous_le_suffixe else dn
+    composants = [c.strip() for c in SEPARATEUR_DN.split(reste) if c.strip()]
+    chemin = composants[1:]
+    # cn=dns est le seul conteneur a profondeur libre : une entree posee sous
+    # une zone est un enregistrement, pas une zone.
+    if chemin and chemin[0].lower().startswith("idnsname="):
+        return "enregistrement dns"
+    for i in range(len(chemin)):
+        trouve = CONTENEURS.get(",".join(chemin[i:]).lower())
+        if trouve:
+            return trouve
+    return branche(dn, base)
+
+
+def relever_modifications(a):
+    """Releve, entree par entree, qui en a fait la derniere ecriture.
+
+    La liste des traces recentes est bornee a mesure et non a la fin : retenir
+    une ligne par entree pour n en garder que vingt couterait, sur un grand
+    annuaire, la memoire de tout le domaine.
+    """
+    entrees = a.entrees(a.base, "(modifiersName=*)",
+                        ["modifiersName", "modifyTimestamp", "creatorsName"])
+    modifiees, creees, dernieres, recentes = {}, {}, {}, []
+    for e in entrees:
+        dn = (e.get("dn") or [""])[0]
+        brut = (e.get("modifiersname") or [""])[0]
+        cle = (lisible(brut), genre_auteur(brut))
+        quand = epoque((e.get("modifytimestamp") or [""])[0])
+        modifiees[cle] = modifiees.get(cle, 0) + 1
+        dernieres[cle] = max(dernieres.get(cle, 0), quand)
+        createur = (e.get("creatorsname") or [""])[0]
+        ne = (lisible(createur), genre_auteur(createur))
+        creees[ne] = creees.get(ne, 0) + 1
+        if quand and dn:
+            trace = (quand, cle[0], cle[1], dn)
+            if len(recentes) < LIMITE_MODIFICATIONS:
+                heapq.heappush(recentes, trace)
+            else:
+                heapq.heappushpop(recentes, trace)
+    return {
+        "suivies": len(entrees),
+        "modifiees": [[auteur, genre, n]
+                      for (auteur, genre), n in sorted(modifiees.items())],
+        "creees": [[auteur, genre, n]
+                   for (auteur, genre), n in sorted(creees.items())],
+        "dernieres": [[auteur, genre, quand]
+                      for (auteur, genre), quand in sorted(dernieres.items()) if quand],
+        "recentes": [[quand, auteur, genre, lisible(dn), branche(dn, a.base)]
+                     for quand, auteur, genre, dn in sorted(recentes, reverse=True)],
+    }
+
+
+def modifications(a, registre):
+    """Qui a modifie quoi, d apres les attributs operationnels de chaque entree.
+
+    Disponible sans rien allumer, mais ne garde que la DERNIERE trace de chaque
+    entree : le journal d audit dirait l historique, ceci dit l etat. Le
+    contexte de l autorite de certification n est pas parcouru, sa liste de
+    revocation reecrite tous les quarts d heure couvrirait tout le reste.
+    """
+    mesure = Releve("modifications", PERIODE_MODIFICATIONS).mesure(
+        lambda: relever_modifications(a))
+
+    registre.declarer("freeipa_entrees_suivies",
+                      "Entrees de l annuaire portant une trace de modification.")
+    registre.ajouter("freeipa_entrees_suivies", mesure["suivies"])
+    registre.declarer("freeipa_entrees_modifiees",
+                      "Entrees dont la derniere modification revient a cet auteur.")
+    for auteur, genre, n in mesure["modifiees"]:
+        registre.ajouter("freeipa_entrees_modifiees", n, auteur=auteur, genre=genre)
+    registre.declarer("freeipa_entrees_creees", "Entrees creees par cet auteur.")
+    for auteur, genre, n in mesure["creees"]:
+        registre.ajouter("freeipa_entrees_creees", n, auteur=auteur, genre=genre)
+    registre.declarer("freeipa_derniere_modification_timestamp",
+                      "Date de la derniere modification faite par cet auteur.")
+    for auteur, genre, quand in mesure["dernieres"]:
+        registre.ajouter("freeipa_derniere_modification_timestamp", quand,
+                         auteur=auteur, genre=genre)
+
+    # Bornee : une serie par entree de l annuaire ferait croitre la cardinalite
+    # avec le domaine, sans rien dire de plus que les series ci-dessus.
+    registre.declarer("freeipa_modification_recente_timestamp",
+                      "Date des dernieres modifications, entree par entree.")
+    for quand, auteur, genre, entree, ou in mesure["recentes"]:
+        registre.ajouter("freeipa_modification_recente_timestamp", quand,
+                         auteur=auteur, genre=genre, entree=entree, branche=ou)
+
+
+class LectureAudit:
+    """Reconstitue les enregistrements du journal d audit, ligne a ligne.
+
+    Un enregistrement reste entier : quand, qui, sur quelle entree, quelle
+    operation et quels NOMS d attributs. Jamais une valeur, pour qu un secret
+    journalise ne puisse pas ressortir en metrique.
+    """
+
+    BLOCS = ("add", "replace", "delete")
+    AUTEURS = ("modifiersname", "creatorsname")
+
+    def __init__(self):
+        self.enregistrements = []
+        self._vider()
+
+    @property
+    def operations(self):
+        return [(e[1], e[2], e[3]) for e in self.enregistrements]
+
+    @property
+    def attributs(self):
+        return [(nom, e[2]) for e in self.enregistrements for nom in e[5]]
+
+    @staticmethod
+    def resume(valeurs):
+        """Rend les identites touchees, bornees, en nommant ce qui est omis."""
+        courtes = sorted(lisible(v) for v in valeurs)
+        if len(courtes) <= PLAFOND_VALEURS:
+            return " ".join(courtes)
+        return " ".join(courtes[:PLAFOND_VALEURS]) + f" +{len(courtes) - PLAFOND_VALEURS}"
+
+    def _vider(self):
+        self._quand = 0
+        self._operation = ""
+        self._auteur = ""
+        self._entree = ""
+        self._aboutie = True
+        self._noms = set()
+        self._valeurs = set()
+        self._bloc = ""
+        # Un passage incrementiel peut reprendre au milieu d un enregistrement :
+        # sans « time: » vu, le fragment est jete plutot que compte de travers.
+        self._ouvert = False
+
+    def clore(self):
+        """Ferme l enregistrement en cours, et le compte s il etait entier."""
+        if self._ouvert and self._operation:
+            self.enregistrements.append((self._quand, self._auteur, self._operation,
+                                         self._aboutie, self._entree,
+                                         tuple(sorted(self._noms)),
+                                         tuple(sorted(self._valeurs))))
+        self._vider()
+
+    def ligne(self, texte):
+        # RFC 2849 : une ligne commencant par une espace continue la precedente.
+        # Elle porte la suite d une VALEUR, jamais un nom d attribut.
+        if texte[:1] in (" ", "\t"):
+            return
+        nu = texte.strip()
+        if not nu:
+            self.clore()
+            return
+        if nu == "-":
+            return
+        decoupe = champ(nu)
+        if decoupe is None:
+            return
+        cle, valeur = decoupe
+        if cle == "time":
+            self.clore()
+            self._ouvert = True
+            self._quand = epoque_locale(valeur)
+        elif cle == "changetype":
+            self._operation = valeur.lower()
+        elif cle == "result":
+            self._aboutie = valeur in ("", "0")
+        elif cle in self.AUTEURS:
+            self._auteur = valeur
+            if self._operation != "modify":
+                self._noms.add(cle)
+        elif cle == "dn":
+            if not self._operation:
+                self._entree = valeur
+        elif self._operation == "modify":
+            # Hors bloc, une ligne est une VALEUR : elle n est lue que si le
+            # bloc qui la porte figure dans la liste blanche.
+            if cle in self.BLOCS:
+                self._bloc = valeur.lower()
+                self._noms.add(self._bloc)
+            elif cle == self._bloc and cle in VALEURS_PUBLIABLES:
+                self._valeurs.add(valeur)
+        else:
+            self._noms.add(cle)
+            if cle in VALEURS_PUBLIABLES:
+                self._valeurs.add(valeur)
+
+
+# Attributs que 389-DS reecrit de lui-meme a chaque ecriture : les montrer dans
+# la trace d un geste noierait celui que l auteur a vraiment touche.
+# Les seuls attributs dont la VALEUR est publiee : des identites, jamais un
+# secret. Une liste blanche, parce qu un motif laisserait passer ce qui s y
+# conforme par accident. Noms releves dans le schema de l annuaire.
+VALEURS_PUBLIABLES = frozenset((
+    "member", "memberof", "memberuser", "memberhost", "memberservice",
+    "memberuid", "memberallowcmd", "memberdenycmd", "membermanager",
+    "membernisnetgroup", "memberprincipal", "uniquemember", "managedby",
+    "ipasudorunas", "ipasudorunasgroup",
+))
+
+# Au-dela, l etiquette dirait la liste des membres plutot que le geste.
+PLAFOND_VALEURS = 5
+
+OPERATIONNELS = frozenset((
+    "modifiersname", "modifytimestamp", "creatorsname", "createtimestamp",
+    "entryusn", "entrydn", "entryid", "nsuniqueid", "numsubordinates", "parentid",
+))
+
+
+def cumuler(table, cle, *sous_cles):
+    """Ajoute un au compteur table[cle][...][derniere sous-cle], au plafond pres.
+
+    Un journal ouvert sur un domaine inconnu ferait croitre sans fin l etat et
+    la cardinalite : passe le plafond, tout va dans « autres ».
+    """
+    if cle not in table and len(table) >= PLAFOND_ETIQUETTES:
+        cle = "autres"
+    noeud = table.setdefault(cle, {})
+    for intermediaire in sous_cles[:-1]:
+        noeud = noeud.setdefault(intermediaire, {})
+    noeud[sous_cles[-1]] = noeud.get(sous_cles[-1], 0) + 1
+
+
+def audit(a, registre):
+    """Qui a modifie quoi, d apres le journal d audit de 389-DS.
+
+    Le journal est eteint par defaut. La sonde publie d abord s il est allume,
+    pour qu un zero ne puisse jamais passer pour « rien ne bouge ».
+    """
+    config = a.entree("cn=config", ["nsslapd-auditlog",
+                                    "nsslapd-auditlog-logging-enabled"])
+    allume = (config.get("nsslapd-auditlog-logging-enabled") or [""])[0].lower() == "on"
+    chemin = JOURNAL_AUDIT or (config.get("nsslapd-auditlog") or [""])[0]
+    octets = os.path.getsize(chemin) if chemin and os.path.exists(chemin) else 0
+
+    lecture = LectureAudit()
+    journal = Journal(chemin, "audit")
+    journal.parcourir(lecture.ligne)
+    lecture.clore()
+
+    etat = journal.etat
+    ecritures = etat.setdefault("audit_ecritures", {})
+    echecs = etat.setdefault("audit_echecs", {})
+    attributs = etat.setdefault("audit_attributs", {})
+    # Bornes a mesure : un premier passage sur un journal de cent megaoctets
+    # garderait sinon une trace par ecriture avant d en retenir vingt.
+    recents = [tuple(t) for t in etat.get("audit_recents", [])]
+    heapq.heapify(recents)
+    for quand, auteur, operation, aboutie, entree, noms, valeurs in lecture.enregistrements:
+        quoi = objet(entree, a.base)
+        cumuler(ecritures, auteur, quoi, operation)
+        if not aboutie:
+            cumuler(echecs, auteur, operation)
+        for nom in noms:
+            cumuler(attributs, nom, operation)
+        if not (quand and entree):
+            continue
+        trace = (quand, lisible(auteur), genre_auteur(auteur), quoi, lisible(entree),
+                 operation, " ".join(n for n in noms if n not in OPERATIONNELS),
+                 LectureAudit.resume(valeurs))
+        if len(recents) < LIMITE_MODIFICATIONS:
+            heapq.heappush(recents, trace)
+        else:
+            heapq.heappushpop(recents, trace)
+    # Une rotation fait relire des enregistrements deja vus : sans ce tri sur
+    # l unicite, un meme geste occuperait plusieurs des vingt places.
+    recents = sorted(set(recents), reverse=True)[:LIMITE_MODIFICATIONS]
+    etat["audit_recents"] = [list(t) for t in recents]
+    etat["audit_enregistrements"] = (etat.get("audit_enregistrements", 0)
+                                     + len(lecture.enregistrements))
+    journal.enregistrer()
+
+    registre.declarer("freeipa_audit_journal_actif",
+                      "1 si 389-DS ecrit son journal d audit. Eteint, rien n est mesurable.")
+    registre.ajouter("freeipa_audit_journal_actif", int(allume))
+    registre.declarer("freeipa_audit_journal_octets", "Taille du journal d audit.")
+    registre.ajouter("freeipa_audit_journal_octets", octets)
+    # Un journal qu on ne sait pas lire rendrait zero, ce qui ressemble a « rien
+    # ne bouge » : il faut pouvoir distinguer les deux.
+    registre.declarer("freeipa_audit_format_reconnu",
+                      "0 si le journal est allume et non vide mais qu aucun"
+                      " enregistrement n en a jamais ete tire.")
+    registre.ajouter("freeipa_audit_format_reconnu",
+                     int(not (allume and octets and not etat["audit_enregistrements"])))
+
+    registre.declarer("freeipa_audit_ecritures_total",
+                      "Ecritures tracees dans le journal d audit, par auteur et"
+                      " par genre d objet touche.", "counter")
+    for auteur, par_objet in sorted(ecritures.items()):
+        for quoi, par_operation in sorted(par_objet.items()):
+            for operation, n in sorted(par_operation.items()):
+                registre.ajouter("freeipa_audit_ecritures_total", n,
+                                 auteur=lisible(auteur), genre=genre_auteur(auteur),
+                                 objet=quoi, operation=operation)
+    registre.declarer("freeipa_audit_echecs_total",
+                      "Ecritures tracees comme n ayant pas abouti.", "counter")
+    for auteur, par_operation in sorted(echecs.items()):
+        for operation, n in sorted(par_operation.items()):
+            registre.ajouter("freeipa_audit_echecs_total", n, auteur=lisible(auteur),
+                             genre=genre_auteur(auteur), operation=operation)
+    registre.declarer("freeipa_audit_attributs_total",
+                      "Attributs touches, par nom. Aucune valeur n est lue.", "counter")
+    for attribut, par_operation in sorted(attributs.items()):
+        for operation, n in sorted(par_operation.items()):
+            registre.ajouter("freeipa_audit_attributs_total", n,
+                             attribut=attribut, operation=operation)
+
+    # Bornee : une serie par ecriture ferait croitre la cardinalite avec le
+    # journal. C est la seule serie qui nomme l entree touchee.
+    registre.declarer("freeipa_audit_ecriture_recente_timestamp",
+                      "Date des dernieres ecritures tracees : qui, sur quelle"
+                      " entree, quels attributs, et quelles identites.")
+    for quand, auteur, genre, quoi, entree, operation, noms, membres in recents:
+        registre.ajouter("freeipa_audit_ecriture_recente_timestamp", quand,
+                         auteur=auteur, genre=genre, objet=quoi, entree=entree,
+                         operation=operation, attributs=noms, membres=membres)
+
+
 def ecrire(chemin, contenu):
     """Ecriture atomique : node_exporter ne doit jamais lire un fichier partiel."""
     descripteur, provisoire = tempfile.mkstemp(dir=os.path.dirname(chemin), suffix=".tmp")
@@ -578,7 +1102,8 @@ def ecrire(chemin, contenu):
 
 
 SONDES = ("services", "annuaire", "etat_annuaire", "connexions", "replication",
-          "inventaire", "machines", "kerberos", "temps_de_reponse", "certificats")
+          "inventaire", "machines", "kerberos", "temps_de_reponse", "certificats",
+          "modifications", "audit")
 
 
 class Sondes:
@@ -624,6 +1149,8 @@ def main():
         sondes.jouer("replication", replication, a, registre)
         sondes.jouer("inventaire", inventaire, a, registre)
         sondes.jouer("machines", machines, a, registre)
+        sondes.jouer("modifications", modifications, a, registre)
+        sondes.jouer("audit", audit, a, registre)
     sondes.jouer("kerberos", kerberos, registre)
     if a is not None:
         sondes.jouer("temps_de_reponse", temps_de_reponse, a, registre)

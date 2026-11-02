@@ -121,6 +121,60 @@ spec:
       annotations:
         summary: 'Des connexions LDAP atteignent le plafond de fils sur {{ $labels.instance }}'
         description: 'L annuaire serialise les requetes de ces clients.'
+  - name: freeipa-ecritures
+    rules:
+    # L exportateur lit le journal d audit de 389-DS, eteint par defaut. Ces
+    # regles disent quand la trace manque, jamais qu elle est absente : un
+    # journal jamais allume n est pas une panne.
+    - alert: FreeipaAuditJournalIllisible
+      # Un journal illisible rend zero, ce qui ressemble a « rien ne bouge ».
+      expr: freeipa_audit_format_reconnu == 0
+      for: 30m
+      labels: {severity: warning}
+      annotations:
+        summary: 'Le journal d audit de {{ $labels.instance }} porte des octets que l exportateur ne sait pas lire'
+        description: 'Les compteurs d ecritures restent a zero sans que rien ne soit immobile.'
+    - alert: FreeipaAuditJournalDesactive
+      # « Allume dans la journee, eteint maintenant » : un journal jamais
+      # allume ne declenche rien, une trace qu on vient de couper si.
+      expr: max_over_time(freeipa_audit_journal_actif[1d]) == 1 and freeipa_audit_journal_actif == 0
+      for: 15m
+      labels: {severity: warning}
+      annotations:
+        summary: 'La journalisation d audit a ete coupee sur {{ $labels.instance }}'
+        description: 'Plus aucune ecriture dans l annuaire n est tracee.'
+    - alert: FreeipaEcrituresRefusees
+      # Un debit est nul sur un compteur qui nait a un et n avance plus : le
+      # premier refus, souvent le seul, passait inapercu. La valeur est donc
+      # comparee a celle d il y a trente minutes, « absente » valant zero, mais
+      # seulement si la sonde etait deja relevee alors : sinon un trou de
+      # collecte ferait passer d anciens refus pour des neufs. « without »
+      # plutot que « by » : job et host portent l acheminement de l alerte.
+      expr: |
+        (
+          sum without (auteur, genre, operation) (freeipa_audit_echecs_total)
+          -
+          (
+            sum without (auteur, genre, operation) (freeipa_audit_echecs_total offset 30m)
+            or
+            (sum without (auteur, genre, operation) (freeipa_audit_echecs_total)) * 0
+          )
+        ) > 0
+        and on (instance) freeipa_audit_journal_actif offset 30m
+      for: 10m
+      labels: {severity: warning}
+      annotations:
+        summary: 'Des ecritures dans l annuaire sont refusees sur {{ $labels.instance }}'
+        description: 'Une application ecrit sans en avoir le droit, ou une entree est mal formee.'
+    - alert: FreeipaAnnuaireSansSuivi
+      # Par instance et non par domaine : si un seul serveur rend zero, c est
+      # sa recherche qui a echoue, et c est lui qu il faut nommer.
+      expr: freeipa_entrees_suivies == 0
+      for: 1h
+      labels: {severity: warning}
+      annotations:
+        summary: 'Aucune entree suivie sur {{ $labels.instance }}'
+        description: 'La recherche des auteurs ne rend rien : base erronee, ou droits insuffisants.'
   - name: freeipa-replication
     rules:
     # Un serveur seul n a pas d accord : ces regles restent muettes chez lui.

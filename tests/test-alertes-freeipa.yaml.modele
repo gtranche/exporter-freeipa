@@ -5,6 +5,11 @@
 # mesure d etablissement de connexion, et la conjonction de FreeipaCacheSature,
 # sans laquelle un cache peu lu serait signale comme sature.
 #
+# Pour les ecritures : le journal d audit est eteint par defaut, donc une regle
+# qui le signalerait absent crierait des le premier jour sur tout le parc. Ce
+# qui est garde ici est la distinction entre « jamais allume » et « on vient de
+# le couper », et le fait que des refus arretes cessent d etre signales.
+#
 # Les annotations sont retirees des regles par tester-alertes.sh : ces tests
 # protegent le declenchement, pas la redaction des messages.
 #
@@ -421,3 +426,122 @@ tests:
     alertname: FreeipaReplicationConflits
     exp_alerts:
     - exp_labels: {severity: warning, instance: 'idm1:9100', suffixe: 'dc=exemple,dc=test'}
+
+- interval: 1m
+  name: un journal d audit jamais allume n est pas une panne
+  input_series:
+  # L etat par defaut de 389-DS. Une regle qui crierait ici serait du bruit
+  # permanent sur tout un parc, et finirait par etre ignoree.
+  - series: 'freeipa_audit_journal_actif{job="@NOM_JOB@",instance="idm1:9100"}'
+    values: '0+0x80'
+  alert_rule_test:
+  - eval_time: 60m
+    alertname: FreeipaAuditJournalDesactive
+    exp_alerts: []
+
+- interval: 1m
+  name: une trace d audit qu on vient de couper est signalee
+  input_series:
+  - series: 'freeipa_audit_journal_actif{job="@NOM_JOB@",instance="idm1:9100"}'
+    values: '1+0x19 0+0x60'
+  alert_rule_test:
+  - eval_time: 60m
+    alertname: FreeipaAuditJournalDesactive
+    exp_alerts:
+    - exp_labels: {severity: warning, job: '@NOM_JOB@', instance: 'idm1:9100'}
+
+- interval: 1m
+  name: seul le serveur dont le journal est illisible est nomme
+  input_series:
+  - series: 'freeipa_audit_format_reconnu{job="@NOM_JOB@",instance="idm1:9100"}'
+    values: '1+0x80'
+  - series: 'freeipa_audit_format_reconnu{job="@NOM_JOB@",instance="idm2:9100"}'
+    values: '0+0x80'
+  alert_rule_test:
+  - eval_time: 60m
+    alertname: FreeipaAuditJournalIllisible
+    exp_alerts:
+    - exp_labels: {severity: warning, job: '@NOM_JOB@', instance: 'idm2:9100'}
+
+- interval: 1m
+  name: un compteur de refus immobile ne signale aucun refus
+  input_series:
+  - series: 'freeipa_audit_echecs_total{job="@NOM_JOB@",instance="idm1:9100",auteur="uid=app,dc=exemple,dc=test",genre="compte",operation="modify"}'
+    values: '7+0x80'
+  - series: 'freeipa_audit_journal_actif{job="@NOM_JOB@",instance="idm1:9100"}'
+    values: '1+0x90'
+  alert_rule_test:
+  - eval_time: 60m
+    alertname: FreeipaEcrituresRefusees
+    exp_alerts: []
+
+- interval: 1m
+  name: des refus d ecriture soutenus sont signales sur le serveur qui les subit
+  input_series:
+  - series: 'freeipa_audit_echecs_total{job="@NOM_JOB@",instance="idm1:9100",auteur="uid=app,dc=exemple,dc=test",genre="compte",operation="modify"}'
+    values: '0+1x80'
+  - series: 'freeipa_audit_journal_actif{job="@NOM_JOB@",instance="idm1:9100"}'
+    values: '1+0x90'
+  alert_rule_test:
+  - eval_time: 60m
+    alertname: FreeipaEcrituresRefusees
+    exp_alerts:
+    - exp_labels: {severity: warning, job: '@NOM_JOB@', instance: 'idm1:9100'}
+
+- interval: 1m
+  name: des refus qui ont cesse ne sont plus signales
+  input_series:
+  # Un compteur ne redescend pas : une regle posee sur sa valeur crierait
+  # pour toujours apres le premier refus. C est ce qui a change qui compte.
+  - series: 'freeipa_audit_echecs_total{job="@NOM_JOB@",instance="idm1:9100",auteur="uid=app,dc=exemple,dc=test",genre="compte",operation="modify"}'
+    values: '0+1x20 20+0x60'
+  - series: 'freeipa_audit_journal_actif{job="@NOM_JOB@",instance="idm1:9100"}'
+    values: '1+0x90'
+  alert_rule_test:
+  - eval_time: 60m
+    alertname: FreeipaEcrituresRefusees
+    exp_alerts: []
+
+- interval: 1m
+  name: un premier refus isole est signale bien que la serie naisse dans la fenetre
+  input_series:
+  # L exportateur ne publie cette serie qu une fois un refus survenu : elle
+  # n existe pas avant, elle nait a un. Un debit calcule sur une serie nee
+  # dans la fenetre rendait zero, et ce refus-la passait inapercu.
+  - series: 'freeipa_audit_echecs_total{job="@NOM_JOB@",instance="idm1:9100",auteur="uid=app,dc=exemple,dc=test",genre="compte",operation="modify"}'
+    values: '_x30 1+0x60'
+  - series: 'freeipa_audit_journal_actif{job="@NOM_JOB@",instance="idm1:9100"}'
+    values: '1+0x90'
+  alert_rule_test:
+  - eval_time: 50m
+    alertname: FreeipaEcrituresRefusees
+    exp_alerts:
+    - exp_labels: {severity: warning, job: '@NOM_JOB@', instance: 'idm1:9100'}
+
+- interval: 1m
+  name: apres un trou de collecte, d anciens refus ne sont pas annonces comme neufs
+  input_series:
+  # Le compteur survit a l arret de la sonde : a son retour il porte des
+  # refus dont nul ne sait quand ils ont eu lieu. Le silence est la seule
+  # reponse honnete, et le refus suivant, lui, sera bien vu.
+  - series: 'freeipa_audit_echecs_total{job="@NOM_JOB@",instance="idm1:9100",auteur="uid=app,dc=exemple,dc=test",genre="compte",operation="modify"}'
+    values: '_x30 5+0x60'
+  - series: 'freeipa_audit_journal_actif{job="@NOM_JOB@",instance="idm1:9100"}'
+    values: '_x30 1+0x60'
+  alert_rule_test:
+  - eval_time: 50m
+    alertname: FreeipaEcrituresRefusees
+    exp_alerts: []
+
+- interval: 1m
+  name: seul le serveur dont la recherche d auteurs ne rend rien est nomme
+  input_series:
+  - series: 'freeipa_entrees_suivies{job="@NOM_JOB@",instance="idm1:9100"}'
+    values: '550+0x90'
+  - series: 'freeipa_entrees_suivies{job="@NOM_JOB@",instance="idm2:9100"}'
+    values: '0+0x90'
+  alert_rule_test:
+  - eval_time: 75m
+    alertname: FreeipaAnnuaireSansSuivi
+    exp_alerts:
+    - exp_labels: {severity: warning, job: '@NOM_JOB@', instance: 'idm2:9100'}

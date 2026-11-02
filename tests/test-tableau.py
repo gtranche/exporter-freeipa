@@ -13,6 +13,10 @@ import unittest
 
 CHEMIN = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                       "..", "grafana", "tableau-freeipa.json")
+CHEMIN_EXPORTATEUR = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                  "..", "exporter-freeipa.py")
+
+SERIE = re.compile(r"\bfreeipa_[a-z_]+")
 
 
 def sources(objet, chemin="tableau"):
@@ -96,16 +100,48 @@ class Tableau(unittest.TestCase):
             for t in p["targets"]:
                 self.assertRegex(t["expr"], r"freeipa_|\bup\b", p["title"])
 
+    def test_chaque_serie_nommee_est_une_serie_que_l_exportateur_publie(self):
+        # Le prefixe ne suffit pas : une serie renommee dans l exportateur
+        # laisse un panneau vide, sans message, et le tableau reste valide.
+        with open(CHEMIN_EXPORTATEUR, encoding="utf-8") as f:
+            publiees = set(SERIE.findall(f.read()))
+        for p in self.d["panels"]:
+            for t in p["targets"]:
+                for nom in SERIE.findall(t["expr"]):
+                    self.assertIn(nom, publiees, p["title"])
+
 # Les huit grandeurs du domaine sont les memes sur tous les serveurs d un
 # domaine actif-actif : chaque exportateur les publie, il faut n en montrer
 # qu une.
 REPLIQUEES = {"freeipa_utilisateurs", "freeipa_groupes", "freeipa_machines",
               "freeipa_groupes_machines", "freeipa_services_enregistres",
-              "freeipa_regles_hbac", "freeipa_regles_sudo", "freeipa_zones_dns"}
+              "freeipa_regles_hbac", "freeipa_regles_sudo", "freeipa_zones_dns",
+              "freeipa_entrees_suivies", "freeipa_entrees_modifiees",
+              "freeipa_entrees_creees", "freeipa_derniere_modification_timestamp",
+              "freeipa_modification_recente_timestamp"}
+
+# Le journal d audit est ecrit par chaque serveur pour ses propres ecritures :
+# l agreger comme une grandeur du domaine en perdrait la plus grande partie.
+PROPRES_AU_SERVEUR = {"freeipa_audit_journal_actif", "freeipa_audit_format_reconnu",
+                      "freeipa_audit_journal_octets", "freeipa_audit_ecritures_total",
+                      "freeipa_audit_echecs_total", "freeipa_audit_attributs_total",
+                      "freeipa_audit_ecriture_recente_timestamp"}
 
 SELECTEUR = re.compile(r"\b(freeipa_[a-z_]+)(\{([^}]*)\})?")
 AGREGATION = re.compile(r"\b(?:sum|avg|count|min|max)\s*(?:by \(([^)]*)\))?\s*\(")
 FILTRE = 'instance=~"$serveur"'
+
+
+def tout_le_domaine(expr):
+    """Dit si la requete efface deliberement la distinction entre serveurs.
+
+    Un « by » qui retient job sans instance fond les serveurs a dessein : c est
+    le motif des grandeurs repliquees, pour lesquelles nommer un serveur n a
+    aucun sens puisque tous portent la meme valeur.
+    """
+    groupes = AGREGATION.findall(expr)
+    return bool(groupes) and all(
+        g is not None and "job" in g and "instance" not in g for g in groupes)
 
 
 def requetes(tableau):
@@ -145,10 +181,20 @@ class PlusieursServeurs(unittest.TestCase):
                 self.assertIn(FILTRE, accolades, f"{titre} : {nom}")
 
     def test_les_grandeurs_du_domaine_ne_sont_comptees_qu_une_fois(self):
+        # « by (job, auteur) » fond les serveurs aussi bien que « by (job) » :
+        # ce qui compte est que job soit retenu et instance non.
         for titre, expr in requetes(self.d):
             noms = {nom for nom, _, _ in SELECTEUR.findall(expr)}
             if noms & REPLIQUEES:
-                self.assertIn("by (job)", expr, titre)
+                self.assertTrue(tout_le_domaine(expr), f"{titre} : {expr}")
+
+    def test_le_journal_d_audit_reste_attache_a_son_serveur(self):
+        # Trois serveurs tracent trois journaux distincts : les fondre
+        # afficherait les ecritures d un seul, ou leur somme sans dire d ou.
+        for titre, expr in requetes(self.d):
+            noms = {nom for nom, _, _ in SELECTEUR.findall(expr)}
+            if noms & PROPRES_AU_SERVEUR:
+                self.assertFalse(tout_le_domaine(expr), f"{titre} : {expr}")
 
     def test_une_serie_qui_nomme_le_serveur_ne_l_agrege_pas(self):
         # Sans « by (instance) », trois serveurs a huit refus deviennent un
@@ -167,11 +213,18 @@ class PlusieursServeurs(unittest.TestCase):
                     self.assertIn("instance", etiquettes, f"{p['title']} : by ({etiquettes})")
 
     def test_une_legende_nommee_nomme_le_serveur(self):
+        # Sauf si la requete a deja fondu les serveurs a dessein : l etiquette
+        # instance n existe plus dans son resultat, la reclamer rendrait une
+        # legende vide.
         for p in self.d["panels"]:
             for t in p["targets"]:
                 legende = t.get("legendFormat", "")
-                if "{{" in legende:
-                    self.assertIn("{{instance}}", legende, p["title"])
+                if "{{" not in legende:
+                    continue
+                if tout_le_domaine(" ".join(t["expr"].split())):
+                    self.assertNotIn("{{instance}}", legende, p["title"])
+                    continue
+                self.assertIn("{{instance}}", legende, p["title"])
 
     def test_une_table_joint_sur_une_cle_qui_distingue_les_serveurs(self):
         # « identite » ou « base » se repetent d un serveur a l autre : joindre
@@ -199,6 +252,13 @@ class PlusieursServeurs(unittest.TestCase):
         exprs = " ".join(expr for _, expr in requetes(self.d))
         for nom in ("freeipa_replication_accords", "freeipa_replication_accord_etat",
                     "freeipa_replication_ruv_timestamp", "freeipa_replication_conflits"):
+            self.assertIn(nom, exprs)
+
+    def test_chaque_mesure_du_journal_d_audit_est_montree_quelque_part(self):
+        # Une serie publiee et jamais affichee est une mesure que personne ne
+        # lira : « qui a modifie quoi » doit etre visible, pas seulement expose.
+        exprs = " ".join(expr for _, expr in requetes(self.d))
+        for nom in sorted(PROPRES_AU_SERVEUR):
             self.assertIn(nom, exprs)
 
     def test_le_retard_de_convergence_se_mesure_entre_serveurs_et_non_sur_un_seul(self):

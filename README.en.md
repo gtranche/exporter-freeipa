@@ -23,7 +23,7 @@ documentation is in [README.md](README.md).
 
 ## What is measured
 
-55 series, all prefixed `freeipa_`:
+66 series, all prefixed `freeipa_`:
 
 | area | series |
 |---|---|
@@ -36,9 +36,10 @@ documentation is in [README.md](README.md).
 | contents | users by state, groups, hosts, host groups, services, HBAC and sudo rules, DNS zones |
 | hosts | `freeipa_machine`, one series per enrolled host |
 | certificates | `freeipa_certificat_expiration_timestamp` |
+| writes | `freeipa_entrees_suivies`, `_modifiees`, `_creees`, `freeipa_derniere_modification_timestamp`, `freeipa_modification_recente_timestamp`, and seven series from the audit log |
 | collection | `freeipa_collecte_reussie`, `_timestamp`, `_duree_secondes`, `_sonde_reussie` |
 
-Three measurements deserve a word.
+Four measurements deserve a word.
 
 `freeipa_temps_reponse_secondes{interface="ldap_premiere"}` exists because the
 **first** search on a fresh connection sometimes costs 250 ms, in windows of
@@ -54,9 +55,51 @@ rarely read. What matters is the conjunction: cache full **and** reads missing
 it.
 
 `freeipa_collecte_sonde_reussie{sonde="..."}` names the probe that failed. The
-ten collectors run one by one, so one failure no longer costs the other nine.
+twelve collectors run one by one, so one failure no longer costs the other
+eleven.
 Measured on a bench where `ipactl` was missing: 9 lines published before, 75
 after, with the failing probe named.
+
+`freeipa_audit_*` and `freeipa_entrees_*` answer "who changed what", from two
+sources neither of which replaces the other. The directory's operational
+attributes — `modifiersName`, `creatorsName` — are there with nothing to switch
+on, but they keep only the **last** write per entry and do not say which
+attribute changed. The 389-DS audit log gives both, and **it is off by
+default**: measured on a server in service, the file was 0 bytes and two years
+old. To switch it on, on the machine:
+
+```sh
+sudo dsconf slapd-EXEMPLE-TEST config replace nsslapd-auditlog-logging-enabled=on
+```
+
+The authors search, on the other hand, costs: 389-DS does not index
+`modifiersName`, so it walks the whole suffix. Measured on 2026-11-01 over 550
+entries, 12.7 ms and `notes=U, Partially Unindexed Filter` — a cost that follows
+the size of the directory, not the number of writes. It is therefore replayed at
+most every `PERIODE_MODIFICATIONS` seconds (900 by default), and its series are
+republished from the saved state in between: a series that vanished would make
+the alerts resting on it flap.
+
+The exporter re-reads the log's path from `cn=config` on every collection, so
+there is nothing to configure on that side. `freeipa_audit_journal_actif`
+reports the state of the switch, and `freeipa_audit_format_reconnu` is 0 when
+the file holds bytes the parser cannot read — otherwise an unreadable log would
+report zero, which looks like "nothing is moving".
+
+**No value is published, except those of an allowlist of sixteen membership
+attributes** — `member`, `memberOf`, `memberUser`, `memberHost`,
+`ipaSudoRunAs`... Those are identities, never a secret, and they are the only
+way to answer "who added **which** user to that group". Everything else comes
+out by attribute *name* only, so that a logged secret cannot resurface as a
+metric. An allowlist, not a pattern: a pattern would let through whatever
+happens to match it. Past five identities the label is truncated with a `+N`
+suffix naming what is missing.
+
+`freeipa_audit_ecriture_recente_timestamp` carries the last twenty gestures and
+names, for each, the author, the **kind of object** touched — user, group,
+host, HBAC rule, sudo rule... derived from the DN's container, since they all
+live under `cn=accounts` —, the entry, the operation, the attributes and the
+identities involved.
 
 ## Several IdM servers, active-active
 
@@ -176,7 +219,8 @@ Prometheus and Grafana may well not be yours. So this repository produces a
     ./rendre.sh kubernetes/supervision.yaml.modele > supervision-freeipa.yaml
 
 The result is complete and self-contained: `Service`, `Endpoints`,
-`ServiceMonitor` and fifteen alerts, six of them on replication. That is the file
+`ServiceMonitor` and nineteen alerts, six of them on replication and four on
+writes. That is the file
 you hand to whoever runs Prometheus — or commit into a GitOps repository. The
 values it needs are grouped in `configuration.env` under "le fichier à remettre
 à qui gère Prometheus"; no other block is read to produce it.
