@@ -72,13 +72,21 @@ outils_presents() {
 # l unite peut dire autre chose que le processus en cours.
 COMPTES_SERVIS="root node_exporter node-exporter prometheus"
 
+# Le nom exact ne suffit pas : empaquete, node_exporter s appelle
+# « prometheus-node-exporter », que le noyau tronque a « prometheus-node » —
+# « pgrep -x node_exporter » ne le voyait pas (mesure du 2026-11-01 sur freeipa).
+MOTIF_NODE_EXPORTER='(^|/)(prometheus-)?node[-_]exporter( |$)'
+RACINE_PROC="${RACINE_PROC:-/proc}"
+
+pids_node_exporter() { pgrep -f "$MOTIF_NODE_EXPORTER" 2>/dev/null || true; }
+
 repertoire_servi() {
     local pid attendu mot proprietaire
-    for pid in $(pgrep -x node_exporter 2>/dev/null || true); do
-        [ -r "/proc/$pid/cmdline" ] || continue
+    for pid in $(pids_node_exporter); do
+        [ -r "$RACINE_PROC/$pid/cmdline" ] || continue
         # Sans ce filtre, tout usager pourrait nommer un processus node_exporter
         # et designer le repertoire ou root ecrira.
-        proprietaire=$(stat -c %U "/proc/$pid" 2>/dev/null || echo inconnu)
+        proprietaire=$(stat -c %U "$RACINE_PROC/$pid" 2>/dev/null || echo inconnu)
         case " $COMPTES_SERVIS " in
             *" $proprietaire "*) ;;
             *) dit "node_exporter de $proprietaire ignore : compte non privilegie." >&2; continue ;;
@@ -90,12 +98,12 @@ repertoire_servi() {
                 --collector.textfile.directory=*) printf '%s\n' "${mot#*=}"; return 0 ;;
                 --collector.textfile.directory) attendu=1 ;;
             esac
-        done < <(tr '\0' '\n' < "/proc/$pid/cmdline")
+        done < <(tr '\0' '\n' < "$RACINE_PROC/$pid/cmdline")
     done
     return 1
 }
 
-node_exporter_tourne() { pgrep -x node_exporter >/dev/null 2>&1; }
+node_exporter_tourne() { [ -n "$(pids_node_exporter)" ]; }
 
 poser_fichier() {
     local source=$1 cible=$2 mode=$3

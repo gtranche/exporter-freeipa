@@ -129,4 +129,102 @@ else
     echoue "$(cat "$atelier/inconnu")"
 fi
 
+# La detection de node_exporter, jouee sur un faux /proc : la machine qui joue
+# le banc n a ni /proc ni « stat -c ». Le faux pgrep applique le motif recu a
+# la ligne de commande simulee, exactement comme « pgrep -f » : c est donc bien
+# le motif de l installeur qui est eprouve, et non une imitation complaisante.
+decor="$atelier/detection"
+mkdir -p "$decor/bin"
+cat > "$decor/bin/pgrep" <<'EOF'
+#!/bin/sh
+[ "$1" = "-f" ] || exit 2
+printf '%s\n' "$CMDLINE_SIMULEE" | grep -Eq -- "$2" || exit 1
+echo 4242
+EOF
+cat > "$decor/bin/stat" <<'EOF'
+#!/bin/sh
+printf '%s\n' "$PROPRIETAIRE_SIMULE"
+EOF
+chmod +x "$decor/bin/pgrep" "$decor/bin/stat"
+
+# Le vrai /proc separe les arguments par des octets nuls ET en pose un apres le
+# dernier : sans lui, « read » perd l argument de queue, qui est le drapeau.
+diagnostiquer() {
+    rm -rf "$decor/proc"
+    mkdir -p "$decor/proc/4242"
+    printf '%s ' "$1" | tr ' ' '\0' > "$decor/proc/4242/cmdline"
+    CMDLINE_SIMULEE="$1" PROPRIETAIRE_SIMULE="$2" RACINE_PROC="$decor/proc" \
+        PATH="$decor/bin:$PATH" "$racine/installer.sh" --racine "$cible" --repertoire-servi
+}
+
+enonce "le repertoire servi est trouve bien que le binaire porte le nom du paquet"
+# Mesure du 2026-11-01 sur freeipa : le processus s appelle
+# prometheus-node-exporter, tronque a prometheus-node, et l ancien
+# « pgrep -x node_exporter » ne rendait rien.
+if obtenu=$(diagnostiquer \
+      "/usr/bin/prometheus-node-exporter --collector.textfile.directory=/var/lib/node_exporter/textfile_collector" \
+      root 2>&1) \
+   && [ "${obtenu##*
+}" = /var/lib/node_exporter/textfile_collector ]; then
+    reussi
+else
+    echoue "${obtenu:-aucun repertoire rendu}"
+fi
+
+enonce "le binaire pose a la main, nomme node_exporter, est trouve aussi"
+if obtenu=$(diagnostiquer \
+      "/usr/local/bin/node_exporter --collector.textfile.directory=/srv/textfile" root 2>&1) \
+   && [ "${obtenu##*
+}" = /srv/textfile ]; then
+    reussi
+else
+    echoue "${obtenu:-aucun repertoire rendu}"
+fi
+
+enonce "le drapeau separe de sa valeur est lu comme celui qui porte un egal"
+if obtenu=$(diagnostiquer \
+      "/usr/bin/node_exporter --collector.textfile.directory /srv/ailleurs" root 2>&1) \
+   && [ "${obtenu##*
+}" = /srv/ailleurs ]; then
+    reussi
+else
+    echoue "${obtenu:-aucun repertoire rendu}"
+fi
+
+enonce "un node_exporter d un compte non privilegie ne designe aucun repertoire"
+if obtenu=$(diagnostiquer \
+      "/tmp/node_exporter --collector.textfile.directory=/tmp/a_moi" mallory 2>&1); then
+    echoue "le repertoire de mallory a ete retenu : $obtenu"
+elif printf '%s' "$obtenu" | grep -q "compte non privilegie"; then
+    reussi
+else
+    echoue "$obtenu"
+fi
+
+enonce "un nom qui ressemble sans en etre un n est pas pris pour node_exporter"
+if obtenu=$(diagnostiquer \
+      "/usr/local/bin/node_exporter_bidon --collector.textfile.directory=/tmp/bidon" root 2>&1); then
+    echoue "le faux a ete retenu : $obtenu"
+else
+    reussi
+fi
+
+enonce "un node_exporter sans le drapeau ne fait pas croire que le fichier sera lu"
+if obtenu=$(diagnostiquer "/usr/bin/node_exporter --web.listen-address=:9100" root 2>&1); then
+    echoue "un repertoire a ete rendu : $obtenu"
+elif printf '%s' "$obtenu" | grep -q "aucun node_exporter"; then
+    reussi
+else
+    echoue "$obtenu"
+fi
+
+enonce "sans aucun node_exporter, le diagnostic refuse au lieu de rendre un defaut"
+if obtenu=$(diagnostiquer "/usr/sbin/sshd -D" root 2>&1); then
+    echoue "un repertoire a ete rendu : $obtenu"
+elif printf '%s' "$obtenu" | grep -q "aucun node_exporter"; then
+    reussi
+else
+    echoue "$obtenu"
+fi
+
 bilan
