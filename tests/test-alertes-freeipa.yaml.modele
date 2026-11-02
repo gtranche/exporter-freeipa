@@ -451,6 +451,16 @@ tests:
     - exp_labels: {severity: warning, job: '@NOM_JOB@', instance: 'idm1:9100'}
 
 - interval: 1m
+  name: une trace d audit toujours allumee ne signale rien
+  input_series:
+  - series: 'freeipa_audit_journal_actif{job="@NOM_JOB@",instance="idm1:9100"}'
+    values: '1+0x90'
+  alert_rule_test:
+  - eval_time: 60m
+    alertname: FreeipaAuditJournalDesactive
+    exp_alerts: []
+
+- interval: 1m
   name: seul le serveur dont le journal est illisible est nomme
   input_series:
   - series: 'freeipa_audit_format_reconnu{job="@NOM_JOB@",instance="idm1:9100"}'
@@ -462,6 +472,39 @@ tests:
     alertname: FreeipaAuditJournalIllisible
     exp_alerts:
     - exp_labels: {severity: warning, job: '@NOM_JOB@', instance: 'idm2:9100'}
+
+- interval: 1m
+  name: un journal des echecs jamais allume ne signale rien
+  input_series:
+  # 389-DS ne journalise pas les echecs par defaut : crier sur chaque
+  # installation neuve ne dirait rien a personne.
+  - series: 'freeipa_audit_journal_echecs_actif{job="@NOM_JOB@",instance="idm1:9100"}'
+    values: '0+0x90'
+  alert_rule_test:
+  - eval_time: 60m
+    alertname: FreeipaAuditEchecsNonTraces
+    exp_alerts: []
+
+- interval: 1m
+  name: une trace des echecs que l on vient de couper est signalee
+  input_series:
+  - series: 'freeipa_audit_journal_echecs_actif{job="@NOM_JOB@",instance="idm1:9100"}'
+    values: '1+0x30 0+0x60'
+  alert_rule_test:
+  - eval_time: 60m
+    alertname: FreeipaAuditEchecsNonTraces
+    exp_alerts:
+    - exp_labels: {severity: warning, job: '@NOM_JOB@', instance: 'idm1:9100'}
+
+- interval: 1m
+  name: une trace des echecs toujours allumee ne signale rien
+  input_series:
+  - series: 'freeipa_audit_journal_echecs_actif{job="@NOM_JOB@",instance="idm1:9100"}'
+    values: '1+0x90'
+  alert_rule_test:
+  - eval_time: 60m
+    alertname: FreeipaAuditEchecsNonTraces
+    exp_alerts: []
 
 - interval: 1m
   name: un compteur de refus immobile ne signale aucun refus

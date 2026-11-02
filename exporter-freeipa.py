@@ -1000,7 +1000,9 @@ def audit(a, registre):
     pour qu un zero ne puisse jamais passer pour « rien ne bouge ».
     """
     config = a.entree("cn=config", ["nsslapd-auditlog",
-                                    "nsslapd-auditlog-logging-enabled"])
+                                    "nsslapd-auditlog-logging-enabled",
+                                    "nsslapd-auditfaillog",
+                                    "nsslapd-auditfaillog-logging-enabled"])
     allume = (config.get("nsslapd-auditlog-logging-enabled") or [""])[0].lower() == "on"
     chemin = JOURNAL_AUDIT or (config.get("nsslapd-auditlog") or [""])[0]
     octets = os.path.getsize(chemin) if chemin and os.path.exists(chemin) else 0
@@ -1045,6 +1047,13 @@ def audit(a, registre):
     registre.declarer("freeipa_audit_journal_actif",
                       "1 si 389-DS ecrit son journal d audit. Eteint, rien n est mesurable.")
     registre.ajouter("freeipa_audit_journal_actif", int(allume))
+    # Un refus n est trace que si 389-DS journalise les echecs, et dans le
+    # fichier que cette sonde lit : sinon « zero refus » ne veut rien dire.
+    traces = ((config.get("nsslapd-auditfaillog-logging-enabled") or [""])[0].lower() == "on"
+              and (config.get("nsslapd-auditfaillog") or [""])[0] == chemin)
+    registre.declarer("freeipa_audit_journal_echecs_actif",
+                      "1 si les ecritures refusees sont tracees dans le journal lu ici.")
+    registre.ajouter("freeipa_audit_journal_echecs_actif", int(traces))
     registre.declarer("freeipa_audit_journal_octets", "Taille du journal d audit.")
     registre.ajouter("freeipa_audit_journal_octets", octets)
     # Un journal qu on ne sait pas lire rendrait zero, ce qui ressemble a « rien

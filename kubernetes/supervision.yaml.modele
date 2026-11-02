@@ -143,6 +143,15 @@ spec:
       annotations:
         summary: 'La journalisation d audit a ete coupee sur {{ $labels.instance }}'
         description: 'Plus aucune ecriture dans l annuaire n est tracee.'
+    - alert: FreeipaAuditEchecsNonTraces
+      # Meme asymetrie que pour le journal lui-meme : jamais trace ne
+      # declenche rien, une trace qu on vient de couper si.
+      expr: max_over_time(freeipa_audit_journal_echecs_actif[1d]) == 1 and freeipa_audit_journal_echecs_actif == 0
+      for: 15m
+      labels: {severity: warning}
+      annotations:
+        summary: 'Les ecritures refusees ne sont plus tracees sur {{ $labels.instance }}'
+        description: 'freeipa_audit_echecs_total restera a zero, ce qui ressemble a « aucun refus ».'
     - alert: FreeipaEcrituresRefusees
       # Un debit est nul sur un compteur qui nait a un et n avance plus : le
       # premier refus, souvent le seul, passait inapercu. La valeur est donc

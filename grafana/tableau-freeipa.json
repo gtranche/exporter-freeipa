@@ -2693,6 +2693,67 @@
         },
         "overrides": []
       }
+    },
+    {
+      "type": "stat",
+      "title": "Refus tracés par 389-DS",
+      "description": "Les écritures refusées ne sont journalisées que si nsslapd-auditfaillog-logging-enabled est à « on » et écrit dans le journal lu ici. Sinon « zéro refus » ne veut rien dire.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${source}"
+      },
+      "gridPos": {
+        "x": 14,
+        "y": 113,
+        "w": 10,
+        "h": 4
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${source}"
+          },
+          "expr": "max by (instance) (freeipa_audit_journal_echecs_actif{instance=~\"$serveur\"})",
+          "refId": "A",
+          "legendFormat": "{{instance}}"
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "background",
+        "graphMode": "none",
+        "textMode": "value_and_name"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "decimals": 0,
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": {
+                  "text": "non tracés",
+                  "color": "orange",
+                  "index": 0
+                },
+                "1": {
+                  "text": "tracés",
+                  "color": "green",
+                  "index": 1
+                }
+              }
+            }
+          ]
+        },
+        "overrides": []
+      }
     }
   ],
   "templating": {

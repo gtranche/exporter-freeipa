@@ -30,7 +30,7 @@ Documentation en anglais : [README.en.md](README.en.md).
 | contenu | utilisateurs par état, groupes, machines, groupes de machines, services, règles HBAC et sudo, zones DNS |
 | machines | `freeipa_machine`, une série par machine enrôlée |
 | certificats | `freeipa_certificat_expiration_timestamp` |
-| écritures | `freeipa_entrees_suivies`, `_modifiees`, `_creees`, `freeipa_derniere_modification_timestamp`, `freeipa_modification_recente_timestamp`, et sept séries du journal d'audit |
+| écritures | `freeipa_entrees_suivies`, `_modifiees`, `_creees`, `freeipa_derniere_modification_timestamp`, `freeipa_modification_recente_timestamp`, et huit séries du journal d'audit |
 | collecte | `freeipa_collecte_reussie`, `_timestamp`, `_duree_secondes`, `_sonde_reussie` |
 
 Quatre mesures méritent un mot.

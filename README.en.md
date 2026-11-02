@@ -36,7 +36,7 @@ documentation is in [README.md](README.md).
 | contents | users by state, groups, hosts, host groups, services, HBAC and sudo rules, DNS zones |
 | hosts | `freeipa_machine`, one series per enrolled host |
 | certificates | `freeipa_certificat_expiration_timestamp` |
-| writes | `freeipa_entrees_suivies`, `_modifiees`, `_creees`, `freeipa_derniere_modification_timestamp`, `freeipa_modification_recente_timestamp`, and seven series from the audit log |
+| writes | `freeipa_entrees_suivies`, `_modifiees`, `_creees`, `freeipa_derniere_modification_timestamp`, `freeipa_modification_recente_timestamp`, and eight series from the audit log |
 | collection | `freeipa_collecte_reussie`, `_timestamp`, `_duree_secondes`, `_sonde_reussie` |
 
 Four measurements deserve a word.

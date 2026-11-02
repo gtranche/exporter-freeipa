@@ -1387,10 +1387,13 @@ class SondeDuJournalDAudit(unittest.TestCase):
         with open(self.journal, mode) as f:
             f.write(texte)
 
-    def collecter(self, allume="on", chemin=None):
+    def collecter(self, allume="on", chemin=None, echecs="off", chemin_echecs=None):
         chemin = self.journal if chemin is None else chemin
+        chemin_echecs = chemin if chemin_echecs is None else chemin_echecs
         commande = Commande(f"dn: cn=config\nnsslapd-auditlog: {chemin}\n"
-                            f"nsslapd-auditlog-logging-enabled: {allume}\n")
+                            f"nsslapd-auditlog-logging-enabled: {allume}\n"
+                            f"nsslapd-auditfaillog: {chemin_echecs}\n"
+                            f"nsslapd-auditfaillog-logging-enabled: {echecs}\n")
         ancien = ef.subprocess.run
         ef.subprocess.run = commande
         self.addCleanup(setattr, ef.subprocess, "run", ancien)
@@ -1408,6 +1411,22 @@ class SondeDuJournalDAudit(unittest.TestCase):
     def test_un_journal_eteint_est_dit_eteint_plutot_que_compte_a_zero(self):
         s = self.collecter(allume="off")
         self.assertEqual(s.valeur("freeipa_audit_journal_actif"), 0)
+
+    def test_des_refus_non_traces_sont_dits_non_traces_plutot_que_comptes_a_zero(self):
+        # 389-DS ne journalise pas les echecs par defaut : sans ce temoin, un
+        # compteur de refus vide passerait pour « aucun refus ».
+        s = self.collecter(echecs="off")
+        self.assertEqual(s.valeur("freeipa_audit_journal_echecs_actif"), 0)
+
+    def test_des_refus_traces_dans_le_journal_lu_sont_annonces_comme_traces(self):
+        s = self.collecter(echecs="on")
+        self.assertEqual(s.valeur("freeipa_audit_journal_echecs_actif"), 1)
+
+    def test_un_journal_d_echecs_ecrit_ailleurs_ne_compte_pas_pour_trace(self):
+        # Journaliser les echecs dans un fichier que la sonde ne lit pas ne
+        # rend pas les refus visibles pour autant.
+        s = self.collecter(echecs="on", chemin_echecs="/var/log/dirsrv/ailleurs")
+        self.assertEqual(s.valeur("freeipa_audit_journal_echecs_actif"), 0)
 
     def test_un_journal_allume_est_annonce_comme_tel(self):
         self.ecrire(MODIFY)

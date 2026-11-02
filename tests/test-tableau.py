@@ -124,6 +124,7 @@ REPLIQUEES = {"freeipa_utilisateurs", "freeipa_groupes", "freeipa_machines",
 # l agreger comme une grandeur du domaine en perdrait la plus grande partie.
 PROPRES_AU_SERVEUR = {"freeipa_audit_journal_actif", "freeipa_audit_format_reconnu",
                       "freeipa_audit_journal_octets", "freeipa_audit_ecritures_total",
+                      "freeipa_audit_journal_echecs_actif",
                       "freeipa_audit_echecs_total", "freeipa_audit_attributs_total",
                       "freeipa_audit_ecriture_recente_timestamp"}
 
