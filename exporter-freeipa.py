@@ -712,7 +712,10 @@ def branche(dn, base):
         return composants[-1]
     # Posee a meme le suffixe, l entree n a pas de branche intermediaire : lui
     # rendre son propre RDN ne ferait que repeter l etiquette « entree ».
-    return base if sous_le_suffixe else (composants[0] or base)
+    if sous_le_suffixe:
+        return base
+    # Un enregistrement d audit sans dn n a ni branche ni suffixe a rendre.
+    return composants[0] if composants else "(non situee)"
 
 
 # Les conteneurs de FreeIPA, lus dans api.env de l installation le 2026-11-01.

@@ -913,6 +913,11 @@ class BrancheDeLEntree(unittest.TestCase):
         self.assertEqual(ef.branche("cn=MasterCRL,ou=crlIssuingPoints,o=ipaca", self.BASE),
                          "o=ipaca")
 
+    def test_un_dn_vide_rend_une_branche_plutot_que_de_lever(self):
+        # Mesure du 2026-11-23 sur freeipa : un enregistrement d audit sans dn
+        # faisait lever IndexError a la sonde.
+        self.assertEqual(ef.branche("", self.BASE), "(non situee)")
+
 
 class GenreDObjetTouche(unittest.TestCase):
     """La branche ne distingue pas ce que l administrateur distingue.
@@ -970,6 +975,9 @@ class GenreDObjetTouche(unittest.TestCase):
         # Un genre inconnu doit rester visible : « autre » cacherait ou l
         # ecriture a eu lieu.
         self.assertEqual(self.objet("cn=x,cn=inconnu"), "cn=inconnu")
+
+    def test_un_dn_vide_rend_un_genre_plutot_que_de_lever(self):
+        self.assertEqual(ef.objet("", self.BASE), "(non situee)")
 
 
 class HeureDUnEnregistrementDAudit(unittest.TestCase):
@@ -1447,6 +1455,34 @@ class SondeDuJournalDAudit(unittest.TestCase):
     def test_un_journal_eteint_et_vide_n_est_pas_signale_comme_illisible(self):
         self.ecrire("")
         self.assertEqual(self.collecter(allume="off").valeur("freeipa_audit_format_reconnu"), 1)
+
+    # Releve dans le journal de freeipa le 2026-11-23 : une ecriture sur la
+    # racine de l annuaire, que ipa-server-upgrade pose. Son dn est VIDE.
+    RACINE = ("time: 20261123102818\n"
+              "dn: \n"
+              "result: 0\n"
+              "changetype: modify\n"
+              "replace: nsslapd-return-default-opattr\n"
+              "nsslapd-return-default-opattr: namingContexts\n"
+              "-\n"
+              "replace: modifiersname\n"
+              "modifiersname: cn=Directory Manager\n"
+              "-\n\n")
+
+    def test_une_ecriture_sur_la_racine_est_comptee_sans_faire_tomber_la_sonde(self):
+        self.ecrire(self.RACINE)
+        s = self.collecter()
+        self.assertEqual(s.valeur("freeipa_audit_journal_actif"), 1)
+        self.assertEqual(s.valeur('freeipa_audit_ecritures_total{auteur="Directory Manager",'
+                                  'genre="administrateur",objet="(non situee)",'
+                                  'operation="modify"}'), 1)
+
+    def test_une_ecriture_sur_la_racine_laisse_la_sonde_avancer_dans_le_journal(self):
+        # La position n est retenue qu apres la boucle : une levee la figeait,
+        # et la sonde relisait le meme enregistrement a chaque passage.
+        self.ecrire(self.RACINE)
+        self.collecter()
+        self.assertEqual(ef.lire_etat().get("audit_position"), len(self.RACINE))
 
     def test_un_journal_allume_encore_vide_n_est_pas_signale_comme_illisible(self):
         self.ecrire("")
