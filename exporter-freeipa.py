@@ -44,7 +44,7 @@ BASES_LDBM = {
 }
 
 CONNEXION = re.compile(r"^(\d+):(\d{14})Z:(\d+):(\d+):[^:]*:(.*):\d+:\d+:\d+:\d+:ip=(.*)$")
-# Un DN peut porter une virgule echappee : « dc\\=local\\,dc\\=skaveo » est un
+# Un DN peut porter une virgule echappee : « dc\\=exemple\\,dc\\=test » est un
 # seul composant.
 SEPARATEUR_DN = re.compile(r"(?<!\\),")
 

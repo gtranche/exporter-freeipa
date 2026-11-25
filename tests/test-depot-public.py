@@ -39,7 +39,9 @@ COMPOSANTS_DC_PERMIS = {"exemple", "test", "impose", "bon", "autre", "devine", "
 
 ADRESSE = re.compile(r"\b(?:\d{1,3}\.){3}\d{1,3}\b")
 DOMAINE = re.compile(r"\b(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+(" + "|".join(TLD_SURVEILLES) + r")\b")
-DC = re.compile(r"\bdc=([A-Za-z0-9_-]+)")
+# Un DN echappe ecrit « dc\\=exemple » : sans tolerer ces contre-obliques, le
+# controle passait a cote de la forme meme dont ce depot parle.
+DC = re.compile(r"\bdc\\*=\\*([A-Za-z0-9_-]+)")
 # Deux caracteres au moins par composant, et rien d alphanumerique apres : un
 # royaume Kerberos ressemble a EXEMPLE.TEST, pas a un fragment de nom de locale
 # ni a une borne d intervalle lue dans une expression reguliere.
@@ -94,6 +96,17 @@ class DepotPublic(unittest.TestCase):
         for ou, m in self.parcourir(DC):
             self.assertIn(m.group(1).lower(), COMPOSANTS_DC_PERMIS,
                           f"{ou} : composant de domaine non declare dc={m.group(1)}")
+
+    def test_le_controle_des_suffixes_voit_un_dn_echappe(self):
+        # La piece d essai est assemblee : ecrite d un trait, elle serait elle-meme
+        # un suffixe non declare et ferait rougir le parcours des fichiers.
+        echappe = "un DN porte « dc\\=" + "interdit" + "\\,dc\\=" + "aussi »"
+        self.assertEqual([m.group(1) for m in DC.finditer(echappe)],
+                         ["interdit", "aussi"])
+
+    def test_le_controle_des_suffixes_voit_un_dn_sans_echappement(self):
+        self.assertEqual([m.group(1) for m in DC.finditer("uid=x,dc=exemple,dc=test")],
+                         ["exemple", "test"])
 
     def test_aucun_royaume_kerberos_reel(self):
         for ou, m in self.parcourir(ROYAUME):
